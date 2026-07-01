@@ -19,8 +19,9 @@ public class PlayerController : MonoBehaviour
     private Vector2 _moveInput;
     private bool _isWalking;
 
-    // 외부 시스템(사운드 등)에서 읽는 프로퍼티
+    // 외부 시스템(사운드, 존버 방지 등)에서 읽는 프로퍼티
     public bool IsMoving { get; private set; }
+    public AgentData Data => agentData;
     public bool IsWalking => _isWalking;
     public float CurrentSpeed => _isWalking ? MoveSpeed * WalkMultiplier : MoveSpeed;
     public float CurrentSoundRadius => agentData != null

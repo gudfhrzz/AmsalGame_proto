@@ -1,10 +1,10 @@
 using UnityEngine;
 using UnityEngine.AI;
 
-[RequireComponent(typeof(NavMeshAgent), typeof(Health))]
+[RequireComponent(typeof(NavMeshAgent), typeof(Health), typeof(CombatController))]
 public class AIController : MonoBehaviour
 {
-    public enum AIState { Idle, Patrol, Suspicious, Chase, Alert }
+    public enum AIState { Idle, Patrol, Suspicious, Chase, Alert, Combat }
 
     [Header("FOV 탐지")]
     [SerializeField] private float viewDistance = 8f;
@@ -25,13 +25,27 @@ public class AIController : MonoBehaviour
     [SerializeField] private float patrolSpeed = 2f;
     [SerializeField] private float chaseSpeed = 4.5f;
 
+    [Header("CQC 교전")]
+    [Tooltip("Chase 중 이 거리 이내로 들어오면 CQC 교전(Combat) 시작")]
+    [SerializeField] private float combatEngageRange = 2f;
+    [Tooltip("이 거리를 벗어나면 교전 해제 후 재수색")]
+    [SerializeField] private float combatDisengageRange = 3.5f;
+    [SerializeField] private float combatRotationSpeed = 480f;
+    [Tooltip("공격/막기 중 무엇을 할지 결정하는 간격 (밸런싱 예정)")]
+    [SerializeField] private float combatActionIntervalMin = 0.8f;
+    [SerializeField] private float combatActionIntervalMax = 1.6f;
+    [SerializeField] private float combatBlockDuration = 1f;
+
     private NavMeshAgent _agent;
     private Health _health;
+    private CombatController _combat;
     private Transform _player;
     private AIState _state;
     private float _stateTimer;
     private Vector3 _lastKnownSoundPos;
     private Vector3 _spawnPosition;
+    private float _combatActionTimer;
+    private float _combatBlockTimer;
 
     public AIState CurrentState => _state;
 
@@ -39,6 +53,7 @@ public class AIController : MonoBehaviour
     {
         _agent = GetComponent<NavMeshAgent>();
         _health = GetComponent<Health>();
+        _combat = GetComponent<CombatController>();
         _spawnPosition = transform.position;
     }
 
@@ -66,7 +81,7 @@ public class AIController : MonoBehaviour
     {
         _stateTimer -= Time.deltaTime;
 
-        if (_state != AIState.Chase)
+        if (_state != AIState.Chase && _state != AIState.Combat)
             CheckFOV();
 
         switch (_state)
@@ -76,6 +91,7 @@ public class AIController : MonoBehaviour
             case AIState.Suspicious: UpdateSuspicious(); break;
             case AIState.Chase:      UpdateChase();      break;
             case AIState.Alert:      UpdateAlert();      break;
+            case AIState.Combat:     UpdateCombat();     break;
         }
     }
 
@@ -113,6 +129,12 @@ public class AIController : MonoBehaviour
                 _agent.isStopped = true;
                 _stateTimer = alertDuration;
                 break;
+
+            case AIState.Combat:
+                _agent.isStopped = true;
+                _combatActionTimer = 0f; // 즉시 첫 행동 결정
+                _combatBlockTimer = 0f;
+                break;
         }
     }
 
@@ -141,21 +163,72 @@ public class AIController : MonoBehaviour
     {
         if (_player == null) return;
 
-        if (CanSeePlayer())
-        {
-            _agent.SetDestination(_player.position);
-        }
-        else
+        if (!CanSeePlayer())
         {
             // 시야 잃음 → 마지막 위치 조사
             _lastKnownSoundPos = _player.position;
             EnterState(AIState.Suspicious);
+            return;
         }
+
+        Vector3 toPlayer = _player.position - transform.position;
+        toPlayer.y = 0f;
+
+        if (toPlayer.magnitude <= combatEngageRange)
+        {
+            EnterState(AIState.Combat);
+            return;
+        }
+
+        _agent.SetDestination(_player.position);
     }
 
     private void UpdateAlert()
     {
         if (_stateTimer <= 0f) EnterState(AIState.Patrol);
+    }
+
+    private void UpdateCombat()
+    {
+        if (_player == null)
+        {
+            EnterState(AIState.Patrol);
+            return;
+        }
+
+        Vector3 toPlayer = _player.position - transform.position;
+        toPlayer.y = 0f;
+
+        if (toPlayer.magnitude > combatDisengageRange || !CanSeePlayer())
+        {
+            _lastKnownSoundPos = _player.position;
+            EnterState(AIState.Suspicious);
+            return;
+        }
+
+        if (toPlayer.sqrMagnitude > 0.01f)
+        {
+            Quaternion targetRot = Quaternion.LookRotation(toPlayer.normalized);
+            transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRot, combatRotationSpeed * Time.deltaTime);
+        }
+
+        _combatBlockTimer -= Time.deltaTime;
+        _combat.SetBlocking(_combatBlockTimer > 0f);
+
+        _combatActionTimer -= Time.deltaTime;
+        if (_combatActionTimer <= 0f)
+            DecideCombatAction();
+    }
+
+    // 간단한 확률 기반 CQC 행동 (플레이스홀더 — 밸런싱 예정)
+    private void DecideCombatAction()
+    {
+        _combatActionTimer = Random.Range(combatActionIntervalMin, combatActionIntervalMax);
+
+        if (Random.value < 0.6f)
+            _combat.TryAttack();
+        else
+            _combatBlockTimer = combatBlockDuration;
     }
 
     // ── 탐지 ──────────────────────────────────────
@@ -198,7 +271,7 @@ public class AIController : MonoBehaviour
 
     public void TriggerAlert()
     {
-        if (_state != AIState.Chase)
+        if (_state != AIState.Chase && _state != AIState.Combat)
             EnterState(AIState.Alert);
     }
 
@@ -247,6 +320,12 @@ public class AIController : MonoBehaviour
         Gizmos.color = new Color(1f, 1f, 0f, 0.1f);
         Vector3 origin = Application.isPlaying ? _spawnPosition : transform.position;
         Gizmos.DrawWireSphere(origin, patrolRadius);
+
+        // CQC 교전/해제 반경
+        Gizmos.color = new Color(1f, 0f, 0f, 0.3f);
+        Gizmos.DrawWireSphere(transform.position, combatEngageRange);
+        Gizmos.color = new Color(1f, 0f, 0f, 0.1f);
+        Gizmos.DrawWireSphere(transform.position, combatDisengageRange);
     }
 #endif
 }
