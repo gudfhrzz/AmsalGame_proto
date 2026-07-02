@@ -500,36 +500,62 @@ public static class Phase1SceneSetup
     private static GameObject SetupHud(StringBuilder log, PlayerController player)
     {
         var canvasGO = GameObject.Find("HUDCanvas");
-        if (canvasGO != null)
+        if (canvasGO == null)
         {
-            log.AppendLine("- HUDCanvas 이미 존재 (스킵)");
-            return canvasGO;
+            canvasGO = new GameObject("HUDCanvas", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler));
+            var canvas = canvasGO.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            var scaler = canvasGO.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            log.AppendLine("- HUDCanvas 생성");
         }
-
-        canvasGO = new GameObject("HUDCanvas", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler));
-        var canvas = canvasGO.GetComponent<Canvas>();
-        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-        var scaler = canvasGO.GetComponent<CanvasScaler>();
-        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1920f, 1080f);
+        else
+        {
+            log.AppendLine("- HUDCanvas 이미 존재 (존버 게이지만 재구성)");
+        }
         var canvasRect = (RectTransform)canvasGO.transform;
 
         var assassination = player.GetComponent<AssassinationSystem>();
         var exposure = player.GetComponent<ExposureSystem>();
         var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
-        // 암살 인디케이터 (적 후방 표시)
-        var iconGO = new GameObject("AssassinationIndicator", typeof(RectTransform), typeof(Image), typeof(AssassinationIndicatorUI));
-        iconGO.transform.SetParent(canvasGO.transform, false);
-        var iconRect = (RectTransform)iconGO.transform;
-        iconRect.sizeDelta = new Vector2(28f, 28f);
-        var iconImage = iconGO.GetComponent<Image>();
-        iconImage.color = Color.red;
-        iconImage.raycastTarget = false;
-        iconImage.enabled = false;
-        iconGO.GetComponent<AssassinationIndicatorUI>().Bind(assassination, Camera.main, canvasRect);
+        // 암살 인디케이터 (적 후방 표시) — 이미 있으면 유지
+        if (canvasGO.transform.Find("AssassinationIndicator") == null)
+        {
+            var iconGO = new GameObject("AssassinationIndicator", typeof(RectTransform), typeof(Image), typeof(AssassinationIndicatorUI));
+            iconGO.transform.SetParent(canvasGO.transform, false);
+            var iconRect = (RectTransform)iconGO.transform;
+            iconRect.sizeDelta = new Vector2(28f, 28f);
+            var iconImage = iconGO.GetComponent<Image>();
+            iconImage.color = Color.red;
+            iconImage.raycastTarget = false;
+            iconImage.enabled = false;
+            iconGO.GetComponent<AssassinationIndicatorUI>().Bind(assassination, Camera.main, canvasRect);
+            log.AppendLine("- 암살 인디케이터 생성");
+        }
 
-        // 존버 방지 게이지 (우상단)
+        // 존버 게이지 클러스터 (우상단, R6풍) — 스타일 갱신이 가능하도록 delete-and-rebuild
+        foreach (var oldName in new[] { "ExposureGaugeBackground", "ExposureGauge", "ExposureCountdownText", "WarningOverlay" })
+        {
+            var old = canvasGO.transform.Find(oldName);
+            if (old != null) Object.DestroyImmediate(old.gameObject);
+        }
+
+        // R6풍 어두운 슬롯 배경 — 게이지보다 사방 4px 크게, 경고 중에만 게이지와 함께 표시 (ExposureGaugeUI가 토글)
+        var gaugeBgGO = new GameObject("ExposureGaugeBackground", typeof(RectTransform), typeof(Image));
+        gaugeBgGO.transform.SetParent(canvasGO.transform, false);
+        var gaugeBgRect = (RectTransform)gaugeBgGO.transform;
+        gaugeBgRect.anchorMin = gaugeBgRect.anchorMax = new Vector2(1f, 1f);
+        gaugeBgRect.pivot = new Vector2(1f, 1f);
+        gaugeBgRect.anchoredPosition = new Vector2(-26f, -26f);
+        gaugeBgRect.sizeDelta = new Vector2(168f, 28f);
+        var gaugeBgImage = gaugeBgGO.GetComponent<Image>();
+        gaugeBgImage.color = new Color(0.08f, 0.09f, 0.10f, 0.85f);
+        gaugeBgImage.raycastTarget = false;
+        gaugeBgGO.SetActive(false);
+
+        // 존버 방지 게이지 (R6풍 옐로 필)
         var gaugeGO = new GameObject("ExposureGauge", typeof(RectTransform), typeof(Image));
         gaugeGO.transform.SetParent(canvasGO.transform, false);
         var gaugeRect = (RectTransform)gaugeGO.transform;
@@ -538,7 +564,7 @@ public static class Phase1SceneSetup
         gaugeRect.anchoredPosition = new Vector2(-30f, -30f);
         gaugeRect.sizeDelta = new Vector2(160f, 20f);
         var gaugeImage = gaugeGO.GetComponent<Image>();
-        gaugeImage.color = Color.yellow;
+        gaugeImage.color = new Color(1f, 0.76f, 0.03f);
         gaugeImage.type = Image.Type.Filled;
         gaugeImage.fillMethod = Image.FillMethod.Horizontal;
         gaugeImage.raycastTarget = false;
@@ -550,13 +576,13 @@ public static class Phase1SceneSetup
         var textRect = (RectTransform)textGO.transform;
         textRect.anchorMin = textRect.anchorMax = new Vector2(1f, 1f);
         textRect.pivot = new Vector2(1f, 1f);
-        textRect.anchoredPosition = new Vector2(-30f, -55f);
+        textRect.anchoredPosition = new Vector2(-30f, -58f);
         textRect.sizeDelta = new Vector2(160f, 24f);
         var countdownText = textGO.GetComponent<Text>();
         countdownText.font = font;
         countdownText.fontSize = 16;
         countdownText.alignment = TextAnchor.MiddleRight;
-        countdownText.color = Color.white;
+        countdownText.color = new Color(1f, 0.76f, 0.03f);
         countdownText.text = "노출 경고!";
         countdownText.raycastTarget = false;
         textGO.SetActive(false);
@@ -574,9 +600,11 @@ public static class Phase1SceneSetup
         overlayImage.raycastTarget = false;
         overlayImage.enabled = false;
 
-        canvasGO.AddComponent<ExposureGaugeUI>().Bind(exposure, gaugeImage, countdownText, overlayImage);
+        var gaugeUI = canvasGO.GetComponent<ExposureGaugeUI>();
+        if (gaugeUI == null) gaugeUI = canvasGO.AddComponent<ExposureGaugeUI>();
+        gaugeUI.Bind(exposure, gaugeImage, countdownText, overlayImage, gaugeBgImage);
 
-        log.AppendLine("- HUDCanvas 생성 (암살 인디케이터, 존버 방지 게이지/카운트다운/경고 오버레이)");
+        log.AppendLine("- 존버 게이지 재구성 (R6풍 슬롯 배경 + 옐로 필 + 카운트다운 + 경고 오버레이)");
         return canvasGO;
     }
 
