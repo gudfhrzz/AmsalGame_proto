@@ -31,6 +31,20 @@ public class ExposureSystem : MonoBehaviour
 
     private void Awake() => _player = GetComponent<PlayerController>();
 
+    private void OnDisable()
+    {
+        // 사망 등으로 정지될 때 잔여 상태 정리 — 시체에서 경고 게이지/노출 오버레이가 남지 않도록
+        // (ExposureGaugeUI가 IsWarning/WarningProgress01을 폴링하므로 값 리셋만으로 게이지가 숨겨진다)
+        _idleTimer = 0f;
+        IsWarning = false;
+        WarningProgress01 = 0f;
+        if (IsExposed)
+        {
+            IsExposed = false;
+            OnExposureEnd?.Invoke();
+        }
+    }
+
     private void Update()
     {
         // 노출은 한 번 시작되면 움직여도 정해진 시간만큼 유지된다 (이동으로 페널티 회피 방지)

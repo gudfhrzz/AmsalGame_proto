@@ -142,8 +142,15 @@ public class CombatController : MonoBehaviour
     private void HandleDeath()
     {
         enabled = false;
-        var player = GetComponent<PlayerController>();
-        if (player != null) player.enabled = false;
+
+        // 시체가 발소리·노출 경고·공격/무기 입력을 계속 내지 않도록 플레이어 계열 컴포넌트 일괄 정지
+        // (AI에는 해당 컴포넌트가 없어 무해 — AI 사망 처리는 AIController.OnDeath)
+        foreach (var type in new[] {
+            typeof(PlayerController), typeof(PlayerCombatInput), typeof(RangedWeaponController),
+            typeof(SoundEmitter), typeof(ExposureSystem) })
+        {
+            if (GetComponent(type) is MonoBehaviour mb) mb.enabled = false;
+        }
     }
 
 #if UNITY_EDITOR

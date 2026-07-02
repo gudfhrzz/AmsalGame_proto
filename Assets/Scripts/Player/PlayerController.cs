@@ -54,6 +54,11 @@ public class PlayerController : MonoBehaviour
         _input.Player.Sprint.performed -= OnWalkToggle;
         _input.Player.Sprint.canceled -= OnWalkToggle;
         _input.Player.Disable();
+
+        // 비활성화(사망 처리 등) 후에도 SoundEmitter/ExposureSystem이 이 값들을 읽으므로 잔존 상태를 정리
+        _moveInput = Vector2.zero;
+        IsMoving = false;
+        _isWalking = false;
     }
 
     private void OnMove(InputAction.CallbackContext ctx) => _moveInput = ctx.ReadValue<Vector2>();

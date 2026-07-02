@@ -46,7 +46,8 @@
 - 맵 확장: `Tools → AmsalGame → 맵 확장 (방 2개 + 복도 추가)` — 기존 방(57.8m×57.8m 실측)에서 벽 2개를 문 있는 벽으로 교체하고 복도(폭 3m)로 연결된 Room B/Room C(7×7m)를 절차적으로 생성. 방 크기는 Player 위치에서 Raycast로 실측(메시 bounds는 신뢰 불가 — 아래 기록 참고). `Phase1SceneSetup.cs`의 `ExpandMap()`.
 - 적 앞/뒤 색상 마커: Enemy 캡슐 자식으로 빨강(정면)/초록(후방, 암살 가능 구간) 구슬 부착 — `SetupFacingMarkers()`.
 - AI 전술 행동 (플레이테스트 피드백 "따라오기만 함" 대응): ① 군집 방지 — `AIController.All` 정적 레지스트리 기반, 순찰 목적지에서 아군 4m 이내 제외 + 이동 중 주기적 분리. ② Chase 협공 분산 — 아군이 이미 Chase/Combat이면 110~150° 측면 우회(InstanceID 타이브레이커, 우회 중 시야각 체크 생략). ③ 코너 체크 — Suspicious 한정, `path.corners` 급커브(65°+) 접근 시 잠깐 멈춰 확인. ④ CQC 3지선다 — 공격 45%/후퇴 30%/막기 나머지, 후퇴는 백스텝하며 플레이어 주시(`updateRotation` Combat에서만 수동), 사거리 밖 공격은 막기로 대체. 전부 플레이테스트 검증 전.
-- 미니맵 아키텍처 기록: 씬 조명이 어두워 실제 지오메트리 렌더 불가 → 전용 카메라가 Minimap 레이어의 언릿 클론만 렌더. 클론은 `RebuildMinimapGeometry()`가 delete-and-rebuild (맵 확장/미로화 메뉴가 자동 갱신 호출). 핑 머티리얼은 URP/Unlit 투명 대신 `Sprites/Default`(블렌드 키워드 함정 회피). 사망 후 유령 핑은 `OnGameEnded` 게이트로 차단 — 근본 원인은 `PlayerController.IsMoving`이 사망 시 리셋 안 되는 것 (미수정, 알려진 버그).
+- 미니맵 아키텍처 기록: 씬 조명이 어두워 실제 지오메트리 렌더 불가 → 전용 카메라가 Minimap 레이어의 언릿 클론만 렌더. 클론은 `RebuildMinimapGeometry()`가 delete-and-rebuild (맵 확장/미로화 메뉴가 자동 갱신 호출). 핑 머티리얼은 URP/Unlit 투명 대신 `Sprites/Default`(블렌드 키워드 함정 회피). 사망 후 유령 핑은 근본 수정됨 — `PlayerController.OnDisable`이 이동 상태 리셋, `OnGameEnded` 게이트는 이중 안전장치로 유지.
+- 플레이어 사망 처리: `CombatController.HandleDeath`가 플레이어 계열 컴포넌트(PlayerController/PlayerCombatInput/RangedWeaponController/SoundEmitter/ExposureSystem)를 일괄 정지 — 시체가 발소리/노출 경고/공격 입력/무기 사용을 계속 내던 버그 수정. `ExposureSystem.OnDisable`이 경고/노출 잔여 상태도 정리(노출 중이었으면 OnExposureEnd 발행해 오버레이/미니맵 링 해제).
 
 ### 🔲 미착수 (Phase 1 잔여)
 - 총알 별도 파밍 (현재는 권총 파밍 시 탄약도 함께 획득하는 것으로 단순화함)

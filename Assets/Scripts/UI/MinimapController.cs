@@ -180,8 +180,8 @@ public class MinimapController : MonoBehaviour
 
     private void HandleSound(SoundEvent e)
     {
-        // 게임 종료 후 게이트 — PlayerController.IsMoving이 사망 시 리셋되지 않아
-        // 시체가 발소리 이벤트를 계속 낼 수 있으므로 여기서 유령 핑을 차단한다
+        // 게임 종료 후 게이트 — 승패 확정 이후의 소리는 정보 가치가 없으므로 핑을 그리지 않는다
+        // (사망 시 유령 핑의 근본 원인이던 IsMoving 잔존은 PlayerController.OnDisable에서 해결됨 — 이중 안전장치)
         if (_gameEnded) return;
 
         bool isAlarm = e.Radius >= alarmRadiusThreshold;
