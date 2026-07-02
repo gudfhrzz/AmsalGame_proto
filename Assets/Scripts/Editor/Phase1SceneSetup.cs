@@ -5,6 +5,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.Rendering.Universal;
 using UnityEngine.UI;
 
 // Phase 1 스크립트(AIController, AssassinationSystem, CombatController, ExposureSystem 등)를
@@ -14,6 +15,7 @@ public static class Phase1SceneSetup
 {
     private const string PlayerLayerName = "Player";
     private const string EnemyLayerName = "Enemy";
+    private const string MinimapLayerName = "Minimap";
     private const int EnemyCount = 2;
 
     [MenuItem("Tools/AmsalGame/Phase 1 씬 자동 구성")]
@@ -30,7 +32,8 @@ public static class Phase1SceneSetup
                 "- A/B 사이트(권총 파밍 지점) 배치\n" +
                 "- Player용 시야 SpotLight 추가 + 태양광 감광 (FOV 차폐)\n" +
                 "- GameStateManager(승패 판정) 배치\n" +
-                "- HUD Canvas 생성 (암살 인디케이터, 존버 방지 게이지, 승패 배너)\n\n" +
+                "- HUD Canvas 생성 (암살 인디케이터, 존버 방지 게이지, 승패 배너)\n" +
+                "- 좌상단 미니맵 (전용 카메라 + 사운드 핑 + 노출 링)\n\n" +
                 "프로젝트 설정(레이어)이 변경됩니다. 계속할까요?",
                 "실행", "취소"))
         {
@@ -55,6 +58,7 @@ public static class Phase1SceneSetup
         {
             var canvas = SetupHud(log, player);
             SetupGameState(log, player, canvas);
+            SetupMinimap(log, player, canvas);
         }
 
         EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
@@ -72,6 +76,7 @@ public static class Phase1SceneSetup
 
         AddLayerIfMissing(layersProp, PlayerLayerName, log);
         AddLayerIfMissing(layersProp, EnemyLayerName, log);
+        AddLayerIfMissing(layersProp, MinimapLayerName, log);
 
         tagManager.ApplyModifiedProperties();
         AssetDatabase.SaveAssets();
@@ -575,6 +580,229 @@ public static class Phase1SceneSetup
         return canvasGO;
     }
 
+    // ── 미니맵 ──────────────────────────────────────
+    // 씬 조명이 의도적으로 어두워서(태양광 감광) 실제 지오메트리를 그대로 찍으면 안 보인다.
+    // 전용 카메라가 Minimap 레이어의 언릿 클론만 렌더 → 조명과 무관한 고대비 평면도.
+
+    private static void SetupMinimap(StringBuilder log, PlayerController player, GameObject canvasGO)
+    {
+        int minimapLayer = LayerMask.NameToLayer(MinimapLayerName);
+        if (minimapLayer < 0)
+        {
+            log.AppendLine("- 미니맵 실패: Minimap 레이어 없음");
+            return;
+        }
+
+        // 메인 카메라에서 Minimap 레이어 제외 (클론/마커가 게임 화면에 보이지 않게)
+        var mainCam = Camera.main;
+        if (mainCam != null && (mainCam.cullingMask & (1 << minimapLayer)) != 0)
+        {
+            mainCam.cullingMask &= ~(1 << minimapLayer);
+            log.AppendLine("- 메인 카메라 cullingMask에서 Minimap 레이어 제외");
+        }
+
+        // 미니맵 전용 카메라 (MainCamera 태그 금지 — AssassinationIndicatorUI가 Camera.main에 바인딩됨)
+        var camGO = GameObject.Find("MinimapCamera");
+        if (camGO == null)
+        {
+            camGO = new GameObject("MinimapCamera", typeof(Camera));
+            log.AppendLine("- MinimapCamera 생성");
+        }
+        var cam = camGO.GetComponent<Camera>();
+        cam.orthographic = true;
+        cam.transform.SetPositionAndRotation(
+            player.transform.position + Vector3.up * 30f,
+            Quaternion.Euler(90f, 0f, 0f));
+        cam.cullingMask = 1 << minimapLayer;
+        cam.clearFlags = CameraClearFlags.SolidColor;
+        cam.backgroundColor = new Color(0.04f, 0.04f, 0.06f, 1f);
+        cam.nearClipPlane = 0.3f;
+        cam.farClipPlane = 50f;
+
+        // URP: RP 에셋이 Depth/Opaque Texture를 전역 활성화하고 있어 오버라이드하지 않으면
+        // 미니맵 카메라가 매 프레임 불필요한 depth prepass + opaque copy를 수행한다
+        var camData = cam.GetUniversalAdditionalCameraData();
+        camData.renderType = CameraRenderType.Base;
+        camData.renderPostProcessing = false;
+        camData.renderShadows = false;
+        camData.volumeLayerMask = 0;
+        camData.requiresDepthOption = CameraOverrideOption.Off;
+        camData.requiresColorOption = CameraOverrideOption.Off;
+
+        // 좌상단 원형 미니맵 UI (R6풍) — 이전(사각) 구조가 있으면 지우고 재구성 (delete-and-rebuild)
+        // 원형 마스크/외곽 링 스프라이트는 MinimapController가 런타임에 절차 생성해 주입한다
+        RawImage rawImage = null;
+        Image maskImage = null;
+        Image frameRingImage = null;
+        if (canvasGO != null)
+        {
+            foreach (var oldName in new[] { "MinimapBorder", "MinimapImage", "MinimapRoot" })
+            {
+                var old = canvasGO.transform.Find(oldName);
+                if (old != null) Object.DestroyImmediate(old.gameObject);
+            }
+
+            var rootGO = new GameObject("MinimapRoot", typeof(RectTransform));
+            rootGO.transform.SetParent(canvasGO.transform, false);
+            var rootRect = (RectTransform)rootGO.transform;
+            rootRect.anchorMin = rootRect.anchorMax = new Vector2(0f, 1f);
+            rootRect.pivot = new Vector2(0f, 1f);
+            rootRect.anchoredPosition = new Vector2(18f, -18f);
+            rootRect.sizeDelta = new Vector2(270f, 270f);
+
+            var maskGO = new GameObject("MinimapMask", typeof(RectTransform), typeof(Image), typeof(Mask));
+            maskGO.transform.SetParent(rootGO.transform, false);
+            StretchToParent((RectTransform)maskGO.transform);
+            maskImage = maskGO.GetComponent<Image>();
+            maskImage.raycastTarget = false;
+            maskGO.GetComponent<Mask>().showMaskGraphic = false; // 스텐실만 사용
+
+            var imageGO = new GameObject("MinimapImage", typeof(RectTransform), typeof(RawImage));
+            imageGO.transform.SetParent(maskGO.transform, false);
+            StretchToParent((RectTransform)imageGO.transform);
+            rawImage = imageGO.GetComponent<RawImage>();
+            rawImage.raycastTarget = false;
+
+            var frameGO = new GameObject("MinimapRing", typeof(RectTransform), typeof(Image));
+            frameGO.transform.SetParent(rootGO.transform, false);
+            StretchToParent((RectTransform)frameGO.transform);
+            frameRingImage = frameGO.GetComponent<Image>();
+            frameRingImage.raycastTarget = false;
+
+            log.AppendLine("- 원형 미니맵 UI 생성 (마스크 + 외곽 링, 좌상단)");
+        }
+
+        // 플레이어 마커 — Player 자식이라 요(yaw) 회전 = 바라보는 방향
+        var markerRoot = player.transform.Find("MinimapPlayerMarker");
+        if (markerRoot == null)
+        {
+            var markerGO = new GameObject("MinimapPlayerMarker");
+            markerGO.transform.SetParent(player.transform, false);
+            markerGO.transform.localPosition = new Vector3(0f, 12f, 0f);
+            markerGO.layer = minimapLayer;
+
+            var markerMat = new Material(Shader.Find("Universal Render Pipeline/Unlit"))
+            {
+                color = new Color(0.3f, 1f, 0.9f)
+            };
+            CreateMinimapMarkerPart(markerGO.transform, "Body", Vector3.zero, new Vector3(1.3f, 0.05f, 1.3f), markerMat, minimapLayer);
+            CreateMinimapMarkerPart(markerGO.transform, "Nose", new Vector3(0f, 0f, 0.95f), new Vector3(0.45f, 0.05f, 0.9f), markerMat, minimapLayer);
+            log.AppendLine("- 미니맵 플레이어 마커 생성");
+        }
+
+        // 존버 노출 링 — 비활성 시작, MinimapController가 노출 이벤트로 토글 + 펄스
+        var ringTr = player.transform.Find("MinimapExposureRing");
+        GameObject ringGO;
+        if (ringTr == null)
+        {
+            ringGO = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            ringGO.name = "MinimapExposureRing";
+            Object.DestroyImmediate(ringGO.GetComponent<Collider>());
+            ringGO.transform.SetParent(player.transform, false);
+            ringGO.transform.localPosition = new Vector3(0f, 11f, 0f);
+            ringGO.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            ringGO.transform.localScale = new Vector3(5f, 5f, 1f);
+            ringGO.layer = minimapLayer;
+            ringGO.SetActive(false);
+            log.AppendLine("- 미니맵 노출 링 생성 (비활성)");
+        }
+        else
+        {
+            ringGO = ringTr.gameObject;
+        }
+
+        RebuildMinimapGeometry(log);
+
+        // 컨트롤러 부착 + 배선
+        var controller = camGO.GetComponent<MinimapController>();
+        if (controller == null) controller = camGO.AddComponent<MinimapController>();
+        controller.Bind(
+            cam,
+            rawImage,
+            maskImage,
+            frameRingImage,
+            player.transform,
+            player.GetComponent<ExposureSystem>(),
+            Object.FindFirstObjectByType<GameStateManager>(),
+            ringGO);
+        log.AppendLine("- MinimapController 배선 완료");
+    }
+
+    private static void StretchToParent(RectTransform rect)
+    {
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+    }
+
+    private static void CreateMinimapMarkerPart(Transform parent, string name, Vector3 localPos, Vector3 localScale, Material mat, int layer)
+    {
+        var part = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        part.name = name;
+        Object.DestroyImmediate(part.GetComponent<Collider>());
+        part.transform.SetParent(parent, false);
+        part.transform.localPosition = localPos;
+        part.transform.localScale = localScale;
+        part.layer = layer;
+        var renderer = part.GetComponent<MeshRenderer>();
+        renderer.sharedMaterial = mat;
+        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+    }
+
+    // 맵 지오메트리(Default 레이어 + MeshRenderer + Collider)의 언릿 클론을 Minimap 레이어에 생성.
+    // skip-if-exists가 아니라 delete-and-rebuild — 맵 확장/미로화 후 구버전 미니맵이 남지 않도록.
+    private static void RebuildMinimapGeometry(StringBuilder log)
+    {
+        int minimapLayer = LayerMask.NameToLayer(MinimapLayerName);
+        if (minimapLayer < 0) return;
+
+        var existingRoot = GameObject.Find("MinimapGeometry");
+        if (existingRoot != null) Object.DestroyImmediate(existingRoot);
+
+        var root = new GameObject("MinimapGeometry");
+        int defaultLayer = LayerMask.NameToLayer("Default");
+
+        var wallMat = new Material(Shader.Find("Universal Render Pipeline/Unlit")) { color = new Color(0.72f, 0.72f, 0.78f) };
+        var floorMat = new Material(Shader.Find("Universal Render Pipeline/Unlit")) { color = new Color(0.15f, 0.15f, 0.19f) };
+
+        int count = 0;
+        foreach (var src in Object.FindObjectsByType<MeshRenderer>(FindObjectsSortMode.None))
+        {
+            var go = src.gameObject;
+            if (go.layer != defaultLayer) continue;
+            if (go.GetComponent<Collider>() == null) continue;             // 콜라이더 없는 장식(마커 구슬 등) 제외
+            if (go.GetComponentInParent<WeaponPickup>() != null) continue; // 파밍 오브젝트 제외
+
+            var mf = go.GetComponent<MeshFilter>();
+            if (mf == null || mf.sharedMesh == null) continue;
+
+            // Instantiate 금지 — ProBuilderMesh/콜라이더/자식이 딸려오므로 렌더링에 필요한 것만 새로 구성.
+            // 콜라이더도 복사하지 않는다 (원본과 겹친 콜라이더는 CharacterController 접촉 중복 유발).
+            var clone = new GameObject("MinimapClone_" + go.name, typeof(MeshFilter), typeof(MeshRenderer));
+            clone.layer = minimapLayer;
+            clone.transform.SetParent(root.transform, true);
+            clone.transform.SetPositionAndRotation(go.transform.position, go.transform.rotation);
+            clone.transform.localScale = go.transform.lossyScale;
+            clone.GetComponent<MeshFilter>().sharedMesh = mf.sharedMesh;
+
+            var cloneRenderer = clone.GetComponent<MeshRenderer>();
+            // 바닥/벽 구분은 이름 기반 — ProBuilder 메시의 bounds는 신뢰 불가 (CLAUDE.md 기록 참고)
+            cloneRenderer.sharedMaterial = go.name.Contains("바닥") ? floorMat : wallMat;
+            cloneRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            count++;
+        }
+
+        log.AppendLine($"- MinimapGeometry 재생성 ({count}개 클론)");
+    }
+
+    // 맵 확장/미로화 후 호출 — 미니맵이 설정된 씬에서만 클론을 갱신한다
+    private static void RefreshMinimapGeometryIfPresent(StringBuilder log)
+    {
+        if (GameObject.Find("MinimapCamera") == null) return;
+        RebuildMinimapGeometry(log);
+    }
+
     // ── 맵 확장 (여러 방 + 복도) ─────────────────────
     // 기존 "바닥"/"외벽*" 오브젝트의 실제 월드 좌표를 런타임에 읽어서 그 기준으로 새 방을 붙인다.
     // 기존 벽 2개(서로 다른 방향)를 제거하고 문이 있는 벽으로 교체한 뒤, 복도 + 새 방을 생성한다.
@@ -603,6 +831,7 @@ public static class Phase1SceneSetup
         var log = new StringBuilder();
         SetupMapExpansion(log);
         BakeNavMesh(log);
+        RefreshMinimapGeometryIfPresent(log);
 
         EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
         Debug.Log("[Phase1SceneSetup] 맵 확장 완료:\n" + log);
@@ -833,6 +1062,7 @@ public static class Phase1SceneSetup
         var log = new StringBuilder();
         SetupMaze(log);
         BakeNavMesh(log);
+        RefreshMinimapGeometryIfPresent(log);
 
         EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
         Debug.Log("[Phase1SceneSetup] 맵 미로화 완료:\n" + log);

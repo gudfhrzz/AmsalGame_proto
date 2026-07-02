@@ -8,13 +8,15 @@ public class ExposureGaugeUI : MonoBehaviour
     [SerializeField] private Image gaugeFill;
     [SerializeField] private Text countdownText;
     [SerializeField] private Image warningOverlay;
+    [SerializeField] private Image gaugeBackground; // R6풍 어두운 슬롯 — 경고 중에만 게이지와 함께 표시
 
-    public void Bind(ExposureSystem exposure, Image gauge, Text countdown, Image overlay)
+    public void Bind(ExposureSystem exposure, Image gauge, Text countdown, Image overlay, Image background = null)
     {
         source = exposure;
         gaugeFill = gauge;
         countdownText = countdown;
         warningOverlay = overlay;
+        gaugeBackground = background;
     }
 
     private void OnEnable()
@@ -45,6 +47,9 @@ public class ExposureGaugeUI : MonoBehaviour
 
         if (countdownText != null)
             countdownText.gameObject.SetActive(showGauge);
+
+        if (gaugeBackground != null)
+            gaugeBackground.gameObject.SetActive(showGauge);
     }
 
     private void HandleExposureStart()

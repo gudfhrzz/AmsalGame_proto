@@ -33,6 +33,8 @@ public class CombatController : MonoBehaviour
     public bool IsParryWindowActive => _parryWindowTimer > 0f;
     // 막기 중엔 공격/그랩 불가 (막기와 공격을 동시에 할 수 없도록)
     public bool IsAttackReady => _attackCooldownTimer <= 0f && !IsStaggered && !IsBlocking;
+    // AI가 사거리 밖에서 헛공격하지 않도록 판단하는 데 사용 (AIController.DecideCombatAction)
+    public float AttackRange => attackRange;
 
     private void Awake()
     {
