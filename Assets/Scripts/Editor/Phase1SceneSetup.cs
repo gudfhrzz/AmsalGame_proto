@@ -5,6 +5,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.AI;
+using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using UnityEngine.UI;
 
@@ -453,10 +454,13 @@ public static class Phase1SceneSetup
             break;
         }
 
-        // 2) 환경광: 스카이박스 기여 차단 — Flat 모드 + 거의 검정 (이걸 안 끄면 태양광을 꺼도 스카이박스가 씬을 밝힌다)
-        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
-        RenderSettings.ambientLight = new Color(0.015f, 0.02f, 0.03f);
-        log.AppendLine("- Ambient Flat (0.015, 0.02, 0.03) — 스카이박스 환경광 차단");
+        // 2) 환경광: 스카이박스 기여 차단 — Flat 모드 + 은은한 저조도.
+        //    시야 마스크(VisionMask)가 어두운 픽셀을 블러+암전 처리하므로, 여기서 완전 검정 대신
+        //    희미한 조도를 남겨야 시야 밖이 "흐릿한 실루엣"으로 보인다 (완전 검정이면 블러할 것도 없음).
+        //    주의: 마스크 임계(_VisibleLumMin=0.12)보다 환경광 기여 luminance가 낮아야 은폐가 유지됨.
+        RenderSettings.ambientMode = AmbientMode.Flat;
+        RenderSettings.ambientLight = new Color(0.07f, 0.08f, 0.10f);
+        log.AppendLine("- Ambient Flat (0.07, 0.08, 0.10) — 시야 마스크가 가릴 저조도 실루엣용");
 
         // 3) 메인 카메라 배경: 스카이박스 대신 검정 — 맵 바깥이 밝게 뚫려 보이는 것 방지
         var mainCam = Camera.main;
@@ -508,6 +512,64 @@ public static class Phase1SceneSetup
         prox.color = new Color(0.7f, 0.75f, 0.85f);
         prox.shadows = LightShadows.None;
         log.AppendLine("- PlayerProximityLight 반경3.5m/강도1.2 — 발밑 최소 가시성");
+
+        // 6) 시야 마스크: 손전등 밖(=어두운 픽셀)을 검은 블러로 뭉개는 화면 후처리
+        SetupVisionMask(log);
+    }
+
+    // 시야 마스크 배선 — VisionMask.mat을 만들어(없으면) 메인 카메라의 VisionMaskOverlay에 주입.
+    // 블러 강도/임계 밝기 튜닝은 Assets/Materials/VisionMask.mat 인스펙터에서.
+    private const string VisionMaskMaterialPath = "Assets/Materials/VisionMask.mat";
+
+    private static void SetupVisionMask(StringBuilder log)
+    {
+        var mainCam = Camera.main;
+        if (mainCam == null)
+        {
+            log.AppendLine("- 시야 마스크 실패: 메인 카메라 없음");
+            return;
+        }
+
+        var shader = Shader.Find("AmsalGame/VisionMask");
+        if (shader == null)
+        {
+            log.AppendLine("- 시야 마스크 실패: AmsalGame/VisionMask 셰이더를 찾을 수 없음 (Console에서 셰이더 컴파일 에러 확인)");
+            return;
+        }
+
+        var mat = AssetDatabase.LoadAssetAtPath<Material>(VisionMaskMaterialPath);
+        if (mat == null)
+        {
+            if (!AssetDatabase.IsValidFolder("Assets/Materials"))
+                AssetDatabase.CreateFolder("Assets", "Materials");
+            mat = new Material(shader);
+            AssetDatabase.CreateAsset(mat, VisionMaskMaterialPath);
+            log.AppendLine($"- {VisionMaskMaterialPath} 생성");
+        }
+        else if (mat.shader != shader)
+        {
+            mat.shader = shader;
+            EditorUtility.SetDirty(mat);
+        }
+
+        var overlay = mainCam.GetComponent<VisionMaskOverlay>();
+        if (overlay == null)
+        {
+            overlay = mainCam.gameObject.AddComponent<VisionMaskOverlay>();
+            log.AppendLine("- 메인 카메라에 VisionMaskOverlay 부착");
+        }
+        overlay.Bind(mat);
+        EditorUtility.SetDirty(overlay);
+
+        // 오파크 텍스처 보장 — PC_RPAsset은 이미 켜져 있지만 RP 에셋 교체에 대비해 안전장치
+        if (GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset rpAsset && !rpAsset.supportsCameraOpaqueTexture)
+        {
+            rpAsset.supportsCameraOpaqueTexture = true;
+            EditorUtility.SetDirty(rpAsset);
+            log.AppendLine("- URP Opaque Texture 활성화 (시야 마스크 필수 조건)");
+        }
+
+        log.AppendLine("- 시야 마스크 적용: 손전등 밖은 검은 블러 처리 (플레이 모드에서 확인)");
     }
 
     // ── 승리/패배 ────────────────────────────────────
