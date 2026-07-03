@@ -455,13 +455,11 @@ public static class Phase1SceneSetup
         }
 
         // 2) 환경광: 스카이박스 기여 차단 — Flat 모드 + 은은한 저조도.
-        //    시야 밖은 마스크가 완전 검정으로 덮으므로 환경광은 "원형 시야 안"의 기본 가독성 담당
-        //    (원형 시야는 손전등 밖이라 이 환경광 + 근접 라이트가 유일한 조명).
-        //    주의: 마스크 임계(_VisibleLumMin=0.16)보다 환경광 기여 luminance가 낮아야 은폐가 유지됨 —
-        //    환경광을 올리면 VisionMask.mat 임계도 같이 올릴 것.
+        //    시야 밖은 마스크가 완전 검정으로 덮고 차폐도 레이캐스트 기반이라, 조명은 이제 순수 연출 —
+        //    환경광은 시야 안(특히 손전등이 안 닿는 원형 영역)의 기본 가독성 담당.
         RenderSettings.ambientMode = AmbientMode.Flat;
         RenderSettings.ambientLight = new Color(0.11f, 0.12f, 0.14f);
-        log.AppendLine("- Ambient Flat (0.11, 0.12, 0.14) — 원형 시야 안 기본 가독성용 저조도");
+        log.AppendLine("- Ambient Flat (0.11, 0.12, 0.14) — 시야 안 기본 가독성용 저조도");
 
         // 3) 메인 카메라 배경: 스카이박스 대신 검정 — 맵 바깥이 밝게 뚫려 보이는 것 방지
         var mainCam = Camera.main;
@@ -488,13 +486,13 @@ public static class Phase1SceneSetup
         vision.type = LightType.Spot;
         vision.spotAngle = 70f;
         vision.innerSpotAngle = 38f;
-        // 마스크 부채꼴 길이(13.75m) 끝까지 임계 밝기 이상으로 비춰야 시야가 그 길이만큼 나온다 —
-        // 사거리는 감쇠 여유분까지 20m, 강도는 원거리 감쇠 보상으로 12
+        // 차폐가 레이캐스트 기반이 되면서 손전등은 순수 연출 — 부채꼴 시야(13.75m) 안이
+        // 그럴듯하게 밝기만 하면 된다 (마스크 판정과 무관)
         vision.range = 20f;
         vision.intensity = 12f;
         vision.color = new Color(0.88f, 0.92f, 1f); // 냉백색 — 전술 라이트 톤
         vision.shadows = LightShadows.Soft;
-        log.AppendLine("- PlayerVisionLight 70°/20m/강도12 — 부채꼴 시야 13.75m를 채우도록 상향");
+        log.AppendLine("- PlayerVisionLight 70°/20m/강도12 — 부채꼴 시야 연출용 (시야 판정과는 무관)");
 
         // 5) 근접 PointLight: 손전등 원뿔 밖이라도 발밑 반경 ~3.5m는 희미하게 —
         //    본인 캡슐/바로 옆 벽조차 안 보이면 조작 자체가 불가능해지는 것 방지 (시야 정보는 거의 없음)
@@ -554,15 +552,14 @@ public static class Phase1SceneSetup
             mat.shader = shader;
         }
 
-        // 머티리얼 수치 덮어쓰기 — 임계는 환경광(0.11~0.14)의 luminance보다 높게 유지해야 은폐됨
-        mat.SetFloat("_VisibleLumMin", 0.13f);        // 부채꼴 안 손전등 도달 판정 (벽 차폐용)
-        mat.SetFloat("_VisibleLumMax", 0.25f);
-        mat.SetFloat("_ClearRadius", 5.5f);           // 플레이어 주변 원형 정상 시야 반경(m)
+        // 머티리얼 수치 덮어쓰기 — 부채꼴 범위/각도는 VisionMaskOverlay의 레이캐스트도 같은 값을 읽는 단일 출처
+        mat.SetFloat("_ClearRadius", 5.5f);           // 플레이어 주변 원형 정상 시야 반경(m) — 고정, 장애물 무시
         mat.SetFloat("_ClearFeather", 1.5f);
         mat.SetFloat("_SectorRange", 13.75f);         // 전방 부채꼴 길이 = 원형 반경의 2.5배 (유저 지정 비율 — 반경 바꾸면 같이 조정)
         mat.SetFloat("_SectorRangeFeather", 2f);
-        mat.SetFloat("_SectorHalfAngleDeg", 33f);     // 손전등 반각 35°보다 약간 안쪽 — 부채꼴 경계가 빛 경계보다 먼저 잘리게
+        mat.SetFloat("_SectorHalfAngleDeg", 33f);     // 손전등 반각 35°보다 약간 안쪽 — 빛이 부채꼴을 다 덮게
         mat.SetFloat("_SectorAngleFeatherDeg", 6f);
+        mat.SetFloat("_OcclusionFeather", 0.35f);     // 장애물 차폐 경계 부드러움(m)
         mat.SetFloat("_HiddenBrightness", 0f);        // 완전 암전 — 실루엣도 안 보임
         EditorUtility.SetDirty(mat);
 
@@ -592,7 +589,7 @@ public static class Phase1SceneSetup
             }
         }
 
-        log.AppendLine("- 시야 마스크 적용: 주변 원형 5.5m + 전방 부채꼴 13.75m(66°)만 보이고 나머지 완전 암전 (플레이 모드에서 확인)");
+        log.AppendLine("- 시야 마스크 적용: 주변 원형 5.5m(고정) + 전방 부채꼴 13.75m/66°(레이캐스트 차폐)만 보이고 나머지 완전 암전");
     }
 
     // ── 승리/패배 ────────────────────────────────────
