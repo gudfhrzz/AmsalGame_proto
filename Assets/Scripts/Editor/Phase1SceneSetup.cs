@@ -553,7 +553,7 @@ public static class Phase1SceneSetup
         }
 
         // 머티리얼 수치 덮어쓰기 — 부채꼴 범위/각도는 VisionMaskOverlay의 레이캐스트도 같은 값을 읽는 단일 출처
-        mat.SetFloat("_ClearRadius", 4.5f);           // 플레이어 주변 원형 정상 시야 반경(m) — 고정, 장애물 무시 (플레이테스트 "살짝 넓다" → 5.5에서 축소)
+        mat.SetFloat("_ClearRadius", 4.5f);           // 플레이어 주변 원형 정상 시야 반경(m) — 벽 차폐 적용 (플레이테스트 "살짝 넓다" → 5.5에서 축소)
         mat.SetFloat("_ClearFeather", 1.5f);
         mat.SetFloat("_SectorRange", 13.75f);         // 전방 부채꼴 길이 — 유저가 체감으로 확정한 값 (원형 축소와 무관하게 유지)
         mat.SetFloat("_SectorRangeFeather", 2f);
@@ -587,9 +587,22 @@ public static class Phase1SceneSetup
                 EditorUtility.SetDirty(rpAsset);
                 log.AppendLine("- URP Depth Texture 활성화 (원형 시야 월드 좌표 복원에 필수)");
             }
+
+            // 오파크 다운샘플링 강제 해제 — 시야 마스크가 화면 전체를 오파크 텍스처로 다시 그리므로,
+            // 다운샘플이 켜져 있으면 게임 화면 전체가 반해상도가 되어 지글거림/깜빡임이 생긴다
+            // (플레이테스트 "화면이 깜빡거린다"의 원인 — 기본값 2x Bilinear). 공개 setter가 없어 SerializedObject 사용.
+            var rpSO = new SerializedObject(rpAsset);
+            var downsampleProp = rpSO.FindProperty("m_OpaqueDownsampling");
+            if (downsampleProp != null && downsampleProp.intValue != 0)
+            {
+                downsampleProp.intValue = 0; // None
+                rpSO.ApplyModifiedProperties();
+                EditorUtility.SetDirty(rpAsset);
+                log.AppendLine("- URP Opaque Downsampling 해제 (2x Bilinear → None) — 화면 깜빡임/반해상도 원인 제거");
+            }
         }
 
-        log.AppendLine("- 시야 마스크 적용: 주변 원형 5.5m(고정) + 전방 부채꼴 13.75m/66°(레이캐스트 차폐)만 보이고 나머지 완전 암전");
+        log.AppendLine("- 시야 마스크 적용: 주변 원형 4.5m + 전방 부채꼴 13.75m/66° (둘 다 레이캐스트 벽 차폐), 나머지 완전 암전");
     }
 
     // ── 승리/패배 ────────────────────────────────────

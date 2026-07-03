@@ -12,13 +12,16 @@ using UnityEngine;
 public class VisionMaskOverlay : MonoBehaviour
 {
     // 셰이더 배열 선언 크기(128) 이하로 유지할 것
-    private const int RayCount = 96;
+    private const int RayCount = 96;        // 부채꼴 (±각도 스팬)
+    private const int CircleRayCount = 128; // 원형 (360° 전방위)
 
     private static readonly int PlayerPosId = Shader.PropertyToID("_VisionPlayerPosWS");
     private static readonly int PlayerForwardId = Shader.PropertyToID("_VisionPlayerForwardWS");
     private static readonly int RayDistId = Shader.PropertyToID("_VisionRayDist");
     private static readonly int RayCountId = Shader.PropertyToID("_VisionRayCount");
     private static readonly int RayHalfSpanId = Shader.PropertyToID("_VisionRayHalfSpanRad");
+    private static readonly int CircleRayDistId = Shader.PropertyToID("_VisionCircleRayDist");
+    private static readonly int CircleRayCountId = Shader.PropertyToID("_VisionCircleRayCount");
 
     [Tooltip("AmsalGame/VisionMask 머티리얼 — Phase1SceneSetup이 주입. 부채꼴 범위/각도의 단일 출처")]
     [SerializeField] private Material maskMaterial;
@@ -34,6 +37,7 @@ public class VisionMaskOverlay : MonoBehaviour
     private Camera _cam;
     private Transform _quad;
     private readonly float[] _rayDistances = new float[RayCount];
+    private readonly float[] _circleRayDistances = new float[CircleRayCount];
 
     public void Bind(Material material, Transform playerTransform)
     {
@@ -100,30 +104,43 @@ public class VisionMaskOverlay : MonoBehaviour
         }
     }
 
-    // 부채꼴 차폐 판정 — 각도별 레이 도달 거리를 셰이더로 넘긴다.
+    // 부채꼴/원형 차폐 판정 — 각도별 레이 도달 거리를 셰이더로 넘긴다.
     // 범위/각도는 머티리얼 값을 단일 출처로 읽어 셰이더의 기하 판정과 항상 일치시킨다.
     private void CastVisionRays()
     {
-        float range = maskMaterial.GetFloat("_SectorRange");
+        float sectorRange = maskMaterial.GetFloat("_SectorRange");
         float halfSpanDeg = maskMaterial.GetFloat("_SectorHalfAngleDeg") + maskMaterial.GetFloat("_SectorAngleFeatherDeg");
+        float clearRadius = maskMaterial.GetFloat("_ClearRadius");
 
         Vector3 origin = player.position + Vector3.up * rayHeight;
         Vector3 forward = player.forward;
         forward.y = 0f;
         forward = forward.sqrMagnitude < 1e-6f ? Vector3.forward : forward.normalized;
 
+        // 부채꼴: 전방(마우스 방향) 기준 ±halfSpan
         for (int i = 0; i < RayCount; i++)
         {
             float angleDeg = Mathf.Lerp(-halfSpanDeg, halfSpanDeg, i / (RayCount - 1f));
             Vector3 dir = Quaternion.AngleAxis(angleDeg, Vector3.up) * forward;
-            _rayDistances[i] = Physics.Raycast(origin, dir, out RaycastHit hit, range, obstacleMask, QueryTriggerInteraction.Ignore)
+            _rayDistances[i] = Physics.Raycast(origin, dir, out RaycastHit hit, sectorRange, obstacleMask, QueryTriggerInteraction.Ignore)
                 ? hit.distance
-                : range; // 장애물 없음 → 원래 시야 범위 끝까지
+                : sectorRange; // 장애물 없음 → 원래 시야 범위 끝까지
+        }
+
+        // 원형: 월드 +z 기준 시계방향 360° — 벽에 붙으면 벽 뒤가 안 보이도록 원형도 차폐 (플레이테스트 피드백)
+        for (int i = 0; i < CircleRayCount; i++)
+        {
+            Vector3 dir = Quaternion.AngleAxis(i * 360f / CircleRayCount, Vector3.up) * Vector3.forward;
+            _circleRayDistances[i] = Physics.Raycast(origin, dir, out RaycastHit hit, clearRadius, obstacleMask, QueryTriggerInteraction.Ignore)
+                ? hit.distance
+                : clearRadius;
         }
 
         Shader.SetGlobalFloatArray(RayDistId, _rayDistances);
         Shader.SetGlobalFloat(RayCountId, RayCount);
         Shader.SetGlobalFloat(RayHalfSpanId, halfSpanDeg * Mathf.Deg2Rad);
+        Shader.SetGlobalFloatArray(CircleRayDistId, _circleRayDistances);
+        Shader.SetGlobalFloat(CircleRayCountId, CircleRayCount);
     }
 
     private void FitToFrustum()

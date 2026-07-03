@@ -1,8 +1,8 @@
-// 시야 마스크 — "플레이어 주변 원형(고정) + 전방 부채꼴(레이캐스트 차폐) = 선명 / 그 외 = 완전 암전".
+// 시야 마스크 — "플레이어 주변 원형 + 전방 부채꼴 = 선명 / 그 외 = 완전 암전". 둘 다 레이캐스트 차폐.
 // 깊이 텍스처로 픽셀의 월드 좌표를 복원해 원형(반경)/부채꼴(방향+거리)을 기하로 판정한다.
-// 부채꼴의 차폐는 조명과 무관 — VisionMaskOverlay가 매 프레임 플레이어 위치에서 부채꼴 범위로
-// 레이캐스트한 거리 배열(_VisionRayDist)을 넘겨주고, 픽셀이 자기 각도의 레이 거리보다 멀면 은폐.
-// 장애물이 없으면 부채꼴 원래 범위(_SectorRange) 끝까지 보인다.
+// 차폐는 조명과 무관 — VisionMaskOverlay가 매 프레임 플레이어 위치에서 레이캐스트한 거리 배열
+// (부채꼴 _VisionRayDist, 원형 360° _VisionCircleRayDist)을 넘겨주고, 픽셀이 자기 각도의
+// 레이 거리보다 멀면 은폐. 장애물이 없으면 각자의 원래 범위 끝까지 보인다.
 // VisionMaskOverlay가 메인 카메라 프러스텀을 채우는 쿼드에 이 셰이더를 입혀 사용.
 // URP Opaque Texture + Depth Texture 필수.
 Shader "AmsalGame/VisionMask"
@@ -54,9 +54,11 @@ Shader "AmsalGame/VisionMask"
             // 머티리얼이 아닌 전역 — VisionMaskOverlay가 매 프레임 갱신
             float3 _VisionPlayerPosWS;
             float3 _VisionPlayerForwardWS;
-            float  _VisionRayCount;        // 실제 사용 레이 개수 (배열 선언 크기 이하)
-            float  _VisionRayHalfSpanRad;  // 레이가 커버하는 반각(라디안) = 부채꼴 반각 + 각도 페더
-            float  _VisionRayDist[128];    // 각도순 레이 도달 거리 — 장애물 없으면 _SectorRange
+            float  _VisionRayCount;          // 부채꼴 레이 개수 (배열 선언 크기 이하)
+            float  _VisionRayHalfSpanRad;    // 부채꼴 레이 반각(라디안) = 부채꼴 반각 + 각도 페더
+            float  _VisionRayDist[128];      // 부채꼴 각도순 도달 거리 — 장애물 없으면 _SectorRange
+            float  _VisionCircleRayCount;    // 원형 360° 레이 개수
+            float  _VisionCircleRayDist[128]; // 월드 +z 기준 시계방향 각도순 — 장애물 없으면 _ClearRadius
 
             struct Attributes { float4 positionOS : POSITION; };
             struct Varyings  { float4 positionCS : SV_POSITION; };
@@ -82,12 +84,21 @@ Shader "AmsalGame/VisionMask"
                 float2 toPixel = worldPos.xz - _VisionPlayerPosWS.xz;
                 float playerDist = length(toPixel);
 
-                // ① 주변 원형 시야 — 고정, 장애물 무시 ("근접 감각" 컨셉)
-                float circleVis = 1.0 - smoothstep(_ClearRadius - _ClearFeather, _ClearRadius, playerDist);
-
-                // ② 전방 부채꼴 시야 — 원형과 별개의 단독 범위, 레이캐스트 차폐
                 float2 fwd = normalize(_VisionPlayerForwardWS.xz + float2(1e-5, 1e-5));
                 float2 dirToPixel = toPixel / max(playerDist, 1e-4);
+
+                // ① 주변 원형 시야 — 반경은 고정이지만 벽 차폐는 적용 (360° 레이 배열).
+                //    각도 기준: 월드 +z에서 시계방향 = C#의 AngleAxis(i*360/N, up)*forward와 동일
+                float circleGeom = 1.0 - smoothstep(_ClearRadius - _ClearFeather, _ClearRadius, playerDist);
+                float angCW = atan2(dirToPixel.x, dirToPixel.y); // [-π, π]
+                float tc = frac(angCW / 6.28318530718 + 1.0) * _VisionCircleRayCount;
+                int c0 = min((int)tc, (int)_VisionCircleRayCount - 1);
+                int c1 = (c0 + 1) % max((int)_VisionCircleRayCount, 1); // 360° 랩어라운드
+                float circleRayDist = min(_VisionCircleRayDist[c0], _VisionCircleRayDist[c1]);
+                float circleOccl = 1.0 - smoothstep(circleRayDist - _OcclusionFeather, circleRayDist, playerDist);
+                float circleVis = circleGeom * circleOccl;
+
+                // ② 전방 부채꼴 시야 — 원형과 별개의 단독 범위, 레이캐스트 차폐
 
                 float cosInner = cos(radians(_SectorHalfAngleDeg));
                 float cosOuter = cos(radians(_SectorHalfAngleDeg + _SectorAngleFeatherDeg));
