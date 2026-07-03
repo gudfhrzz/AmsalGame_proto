@@ -455,12 +455,13 @@ public static class Phase1SceneSetup
         }
 
         // 2) 환경광: 스카이박스 기여 차단 — Flat 모드 + 은은한 저조도.
-        //    시야 마스크(VisionMask)가 어두운 픽셀을 블러+암전 처리하므로, 여기서 완전 검정 대신
-        //    희미한 조도를 남겨야 시야 밖이 "흐릿한 실루엣"으로 보인다 (완전 검정이면 블러할 것도 없음).
-        //    주의: 마스크 임계(_VisibleLumMin=0.12)보다 환경광 기여 luminance가 낮아야 은폐가 유지됨.
+        //    시야 밖은 마스크가 완전 검정으로 덮으므로 환경광은 "원형 시야 안"의 기본 가독성 담당
+        //    (원형 시야는 손전등 밖이라 이 환경광 + 근접 라이트가 유일한 조명).
+        //    주의: 마스크 임계(_VisibleLumMin=0.16)보다 환경광 기여 luminance가 낮아야 은폐가 유지됨 —
+        //    환경광을 올리면 VisionMask.mat 임계도 같이 올릴 것.
         RenderSettings.ambientMode = AmbientMode.Flat;
-        RenderSettings.ambientLight = new Color(0.07f, 0.08f, 0.10f);
-        log.AppendLine("- Ambient Flat (0.07, 0.08, 0.10) — 시야 마스크가 가릴 저조도 실루엣용");
+        RenderSettings.ambientLight = new Color(0.11f, 0.12f, 0.14f);
+        log.AppendLine("- Ambient Flat (0.11, 0.12, 0.14) — 원형 시야 안 기본 가독성용 저조도");
 
         // 3) 메인 카메라 배경: 스카이박스 대신 검정 — 맵 바깥이 밝게 뚫려 보이는 것 방지
         var mainCam = Camera.main;
@@ -487,11 +488,11 @@ public static class Phase1SceneSetup
         vision.type = LightType.Spot;
         vision.spotAngle = 70f;
         vision.innerSpotAngle = 38f;
-        vision.range = 11f;
-        vision.intensity = 7f;
+        vision.range = 16f;
+        vision.intensity = 8f;
         vision.color = new Color(0.88f, 0.92f, 1f); // 냉백색 — 전술 라이트 톤
         vision.shadows = LightShadows.Soft;
-        log.AppendLine("- PlayerVisionLight 70°/11m/강도7 (기존 100°/14m/5 → 제한 시야 강화)");
+        log.AppendLine("- PlayerVisionLight 70°/16m/강도8 (플레이테스트 '시야가 너무 짧다' → 11m에서 연장)");
 
         // 5) 근접 PointLight: 손전등 원뿔 밖이라도 발밑 반경 ~3.5m는 희미하게 —
         //    본인 캡슐/바로 옆 벽조차 안 보이면 조작 자체가 불가능해지는 것 방지 (시야 정보는 거의 없음)
@@ -507,21 +508,21 @@ public static class Phase1SceneSetup
 
         var prox = proxT.GetComponent<Light>();
         prox.type = LightType.Point;
-        prox.range = 3.5f;
-        prox.intensity = 1.2f;
+        prox.range = 6f;
+        prox.intensity = 2f;
         prox.color = new Color(0.7f, 0.75f, 0.85f);
         prox.shadows = LightShadows.None;
-        log.AppendLine("- PlayerProximityLight 반경3.5m/강도1.2 — 발밑 최소 가시성");
+        log.AppendLine("- PlayerProximityLight 반경6m/강도2 — 원형 시야(마스크 _ClearRadius 5.5m) 안을 밝히는 조명");
 
-        // 6) 시야 마스크: 손전등 밖(=어두운 픽셀)을 검은 블러로 뭉개는 화면 후처리
-        SetupVisionMask(log);
+        // 6) 시야 마스크: 손전등 밖(=어두운 픽셀)을 완전 암전 처리하는 화면 후처리 + 플레이어 주변 원형 시야
+        SetupVisionMask(log, player);
     }
 
     // 시야 마스크 배선 — VisionMask.mat을 만들어(없으면) 메인 카메라의 VisionMaskOverlay에 주입.
-    // 블러 강도/임계 밝기 튜닝은 Assets/Materials/VisionMask.mat 인스펙터에서.
+    // 다른 조명 수치처럼 머티리얼 값도 항상 덮어쓴다 (메뉴 재실행 = 튜닝 반영).
     private const string VisionMaskMaterialPath = "Assets/Materials/VisionMask.mat";
 
-    private static void SetupVisionMask(StringBuilder log)
+    private static void SetupVisionMask(StringBuilder log, PlayerController player)
     {
         var mainCam = Camera.main;
         if (mainCam == null)
@@ -549,8 +550,15 @@ public static class Phase1SceneSetup
         else if (mat.shader != shader)
         {
             mat.shader = shader;
-            EditorUtility.SetDirty(mat);
         }
+
+        // 머티리얼 수치 덮어쓰기 — 임계는 환경광(0.11~0.14)의 luminance보다 높게 유지해야 은폐됨
+        mat.SetFloat("_VisibleLumMin", 0.16f);
+        mat.SetFloat("_VisibleLumMax", 0.35f);
+        mat.SetFloat("_ClearRadius", 5.5f);      // 플레이어 주변 원형 정상 시야 반경(m)
+        mat.SetFloat("_ClearFeather", 1.5f);
+        mat.SetFloat("_HiddenBrightness", 0f);   // 완전 암전 — 실루엣도 안 보임 (블러/탈색/틴트 무의미해짐)
+        EditorUtility.SetDirty(mat);
 
         var overlay = mainCam.GetComponent<VisionMaskOverlay>();
         if (overlay == null)
@@ -558,18 +566,27 @@ public static class Phase1SceneSetup
             overlay = mainCam.gameObject.AddComponent<VisionMaskOverlay>();
             log.AppendLine("- 메인 카메라에 VisionMaskOverlay 부착");
         }
-        overlay.Bind(mat);
+        overlay.Bind(mat, player.transform);
         EditorUtility.SetDirty(overlay);
 
-        // 오파크 텍스처 보장 — PC_RPAsset은 이미 켜져 있지만 RP 에셋 교체에 대비해 안전장치
-        if (GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset rpAsset && !rpAsset.supportsCameraOpaqueTexture)
+        // 오파크/깊이 텍스처 보장 — PC_RPAsset은 둘 다 이미 켜져 있지만 RP 에셋 교체에 대비해 안전장치
+        if (GraphicsSettings.currentRenderPipeline is UniversalRenderPipelineAsset rpAsset)
         {
-            rpAsset.supportsCameraOpaqueTexture = true;
-            EditorUtility.SetDirty(rpAsset);
-            log.AppendLine("- URP Opaque Texture 활성화 (시야 마스크 필수 조건)");
+            if (!rpAsset.supportsCameraOpaqueTexture)
+            {
+                rpAsset.supportsCameraOpaqueTexture = true;
+                EditorUtility.SetDirty(rpAsset);
+                log.AppendLine("- URP Opaque Texture 활성화 (시야 마스크 필수 조건)");
+            }
+            if (!rpAsset.supportsCameraDepthTexture)
+            {
+                rpAsset.supportsCameraDepthTexture = true;
+                EditorUtility.SetDirty(rpAsset);
+                log.AppendLine("- URP Depth Texture 활성화 (원형 시야 월드 좌표 복원에 필수)");
+            }
         }
 
-        log.AppendLine("- 시야 마스크 적용: 손전등 밖은 검은 블러 처리 (플레이 모드에서 확인)");
+        log.AppendLine("- 시야 마스크 적용: 손전등 + 플레이어 반경 5.5m 원형만 보이고 나머지 완전 암전 (플레이 모드에서 확인)");
     }
 
     // ── 승리/패배 ────────────────────────────────────
