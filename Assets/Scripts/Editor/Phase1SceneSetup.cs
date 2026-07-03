@@ -488,11 +488,13 @@ public static class Phase1SceneSetup
         vision.type = LightType.Spot;
         vision.spotAngle = 70f;
         vision.innerSpotAngle = 38f;
-        vision.range = 16f;
-        vision.intensity = 8f;
+        // 마스크 부채꼴 길이(13.75m) 끝까지 임계 밝기 이상으로 비춰야 시야가 그 길이만큼 나온다 —
+        // 사거리는 감쇠 여유분까지 20m, 강도는 원거리 감쇠 보상으로 12
+        vision.range = 20f;
+        vision.intensity = 12f;
         vision.color = new Color(0.88f, 0.92f, 1f); // 냉백색 — 전술 라이트 톤
         vision.shadows = LightShadows.Soft;
-        log.AppendLine("- PlayerVisionLight 70°/16m/강도8 (플레이테스트 '시야가 너무 짧다' → 11m에서 연장)");
+        log.AppendLine("- PlayerVisionLight 70°/20m/강도12 — 부채꼴 시야 13.75m를 채우도록 상향");
 
         // 5) 근접 PointLight: 손전등 원뿔 밖이라도 발밑 반경 ~3.5m는 희미하게 —
         //    본인 캡슐/바로 옆 벽조차 안 보이면 조작 자체가 불가능해지는 것 방지 (시야 정보는 거의 없음)
@@ -553,11 +555,15 @@ public static class Phase1SceneSetup
         }
 
         // 머티리얼 수치 덮어쓰기 — 임계는 환경광(0.11~0.14)의 luminance보다 높게 유지해야 은폐됨
-        mat.SetFloat("_VisibleLumMin", 0.16f);
-        mat.SetFloat("_VisibleLumMax", 0.35f);
-        mat.SetFloat("_ClearRadius", 5.5f);      // 플레이어 주변 원형 정상 시야 반경(m)
+        mat.SetFloat("_VisibleLumMin", 0.13f);        // 부채꼴 안 손전등 도달 판정 (벽 차폐용)
+        mat.SetFloat("_VisibleLumMax", 0.25f);
+        mat.SetFloat("_ClearRadius", 5.5f);           // 플레이어 주변 원형 정상 시야 반경(m)
         mat.SetFloat("_ClearFeather", 1.5f);
-        mat.SetFloat("_HiddenBrightness", 0f);   // 완전 암전 — 실루엣도 안 보임 (블러/탈색/틴트 무의미해짐)
+        mat.SetFloat("_SectorRange", 13.75f);         // 전방 부채꼴 길이 = 원형 반경의 2.5배 (유저 지정 비율 — 반경 바꾸면 같이 조정)
+        mat.SetFloat("_SectorRangeFeather", 2f);
+        mat.SetFloat("_SectorHalfAngleDeg", 33f);     // 손전등 반각 35°보다 약간 안쪽 — 부채꼴 경계가 빛 경계보다 먼저 잘리게
+        mat.SetFloat("_SectorAngleFeatherDeg", 6f);
+        mat.SetFloat("_HiddenBrightness", 0f);        // 완전 암전 — 실루엣도 안 보임
         EditorUtility.SetDirty(mat);
 
         var overlay = mainCam.GetComponent<VisionMaskOverlay>();
@@ -586,7 +592,7 @@ public static class Phase1SceneSetup
             }
         }
 
-        log.AppendLine("- 시야 마스크 적용: 손전등 + 플레이어 반경 5.5m 원형만 보이고 나머지 완전 암전 (플레이 모드에서 확인)");
+        log.AppendLine("- 시야 마스크 적용: 주변 원형 5.5m + 전방 부채꼴 13.75m(66°)만 보이고 나머지 완전 암전 (플레이 모드에서 확인)");
     }
 
     // ── 승리/패배 ────────────────────────────────────

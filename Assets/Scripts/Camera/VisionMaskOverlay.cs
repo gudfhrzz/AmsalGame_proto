@@ -10,6 +10,7 @@ using UnityEngine;
 public class VisionMaskOverlay : MonoBehaviour
 {
     private static readonly int PlayerPosId = Shader.PropertyToID("_VisionPlayerPosWS");
+    private static readonly int PlayerForwardId = Shader.PropertyToID("_VisionPlayerForwardWS");
 
     [Tooltip("AmsalGame/VisionMask 머티리얼 — Phase1SceneSetup이 주입")]
     [SerializeField] private Material maskMaterial;
@@ -65,9 +66,12 @@ public class VisionMaskOverlay : MonoBehaviour
     private void LateUpdate()
     {
         FitToFrustum();
-        // 원형 시야 기준점 갱신 — 사망(컴포넌트 비활성)해도 transform은 남으니 마지막 위치 유지
+        // 원형/부채꼴 시야 기준 갱신 — 사망(컴포넌트 비활성)해도 transform은 남으니 마지막 상태 유지
         if (player != null)
+        {
             Shader.SetGlobalVector(PlayerPosId, player.position);
+            Shader.SetGlobalVector(PlayerForwardId, player.forward);
+        }
     }
 
     private void FitToFrustum()
