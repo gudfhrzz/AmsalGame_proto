@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -24,6 +25,8 @@ public class MinimapController : MonoBehaviour
     [SerializeField] private float pingRadiusMax = 25f;
     [Tooltip("이 반경 이상이면 전역 사운드(총성)로 간주해 경고색 사용")]
     [SerializeField] private float alarmRadiusThreshold = 50f;
+    [Tooltip("같은 주체가 내는 소리의 핑 최소 간격(초) — 발소리(0.3초마다 emit)가 전부 찍히면 너무 촘촘함. 전역 경보(총성)는 스로틀 무시")]
+    [SerializeField] private float pingIntervalPerSource = 1.2f;
     [SerializeField] private Color pingColor = new Color(1f, 1f, 0.6f, 0.6f);
     [SerializeField] private Color alarmPingColor = new Color(1f, 0.2f, 0.2f, 0.7f);
 
@@ -62,6 +65,7 @@ public class MinimapController : MonoBehaviour
     private Material _ringMaterial;
     private int _minimapLayer;
     private bool _gameEnded;
+    private readonly Dictionary<int, float> _lastPingTimeBySource = new();
 
     public void Bind(Camera cam, RawImage image, Image circleMask, Image circleFrame, Transform playerTransform,
         ExposureSystem exposureSystem, GameStateManager state, GameObject ring)
@@ -185,6 +189,17 @@ public class MinimapController : MonoBehaviour
         if (_gameEnded) return;
 
         bool isAlarm = e.Radius >= alarmRadiusThreshold;
+
+        // 연속 발생하는 소리(발소리)는 주체별 스로틀 — 이벤트마다 찍으면 시각적으로 너무 촘촘함.
+        // 게임플레이(AI 청각)는 그대로 두고 표시만 걸러낸다. 총성 등 전역 경보는 항상 표시.
+        if (!isAlarm)
+        {
+            int key = e.Source != null ? e.Source.GetInstanceID() : 0;
+            if (_lastPingTimeBySource.TryGetValue(key, out float last) && Time.time - last < pingIntervalPerSource)
+                return;
+            _lastPingTimeBySource[key] = Time.time;
+        }
+
         float radius = Mathf.Clamp(e.Radius, pingRadiusMin, pingRadiusMax);
 
         var pingGO = GameObject.CreatePrimitive(PrimitiveType.Quad);

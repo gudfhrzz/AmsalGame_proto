@@ -30,7 +30,7 @@ public static class Phase1SceneSetup
                 "- 테스트용 Enemy 2기 배치 (AIController, CombatController)\n" +
                 "- NavMesh 베이크\n" +
                 "- A/B 사이트(권총 파밍 지점) 배치\n" +
-                "- Player용 시야 SpotLight 추가 + 태양광 감광 (FOV 차폐)\n" +
+                "- Player용 시야 SpotLight + 특수부대풍 암전 (태양광/환경광 소등, FOV 차폐)\n" +
                 "- GameStateManager(승패 판정) 배치\n" +
                 "- HUD Canvas 생성 (암살 인디케이터, 존버 방지 게이지, 승패 배너)\n" +
                 "- 좌상단 미니맵 (전용 카메라 + 사운드 핑 + 노출 링)\n\n" +
@@ -412,45 +412,102 @@ public static class Phase1SceneSetup
         renderer.sharedMaterial = mat;
     }
 
-    // ── FOV (시야 SpotLight) ────────────────────────
+    // ── FOV (시야 SpotLight + 특수부대풍 암전) ────────────────────────
 
     private static void SetupVisionLight(StringBuilder log, PlayerController player)
     {
         if (player == null) return;
+        ApplyTacticalLighting(log, player);
+    }
 
-        Light sun = null;
-        foreach (var l in Object.FindObjectsByType<Light>(FindObjectsSortMode.None))
+    // 단독 메뉴 — 이미 배선된 씬에도 재실행으로 조명 수치를 덮어쓸 수 있는 튜닝 노브.
+    // 컨셉: 맵 전체가 거의 완전한 어둠(밀실) + 플레이어 손전등(좁은 원뿔)만이 유일한 시야.
+    [MenuItem("Tools/AmsalGame/특수부대 조명 적용 (제한 시야 강화)")]
+    public static void RunTacticalLighting()
+    {
+        var player = Object.FindFirstObjectByType<PlayerController>();
+        if (player == null)
         {
-            if (l.type == LightType.Directional) { sun = l; break; }
-        }
-
-        if (sun != null && sun.intensity > 0.5f)
-        {
-            sun.intensity = 0.25f;
-            log.AppendLine("- Directional Light 감광 (2 → 0.25) — 시야 밖은 어둡게");
-        }
-
-        if (player.transform.Find("PlayerVisionLight") != null)
-        {
-            log.AppendLine("- PlayerVisionLight 이미 존재 (스킵)");
+            EditorUtility.DisplayDialog("특수부대 조명", "PlayerController를 찾을 수 없습니다. Phase 1 씬 자동 구성을 먼저 실행하세요.", "확인");
             return;
         }
 
-        var visionGO = new GameObject("PlayerVisionLight", typeof(Light));
-        visionGO.transform.SetParent(player.transform, false);
-        visionGO.transform.localPosition = new Vector3(0f, 1.2f, 0f);
-        visionGO.transform.localRotation = Quaternion.Euler(25f, 0f, 0f);
+        var log = new StringBuilder();
+        ApplyTacticalLighting(log, player);
+        EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
 
-        var light = visionGO.GetComponent<Light>();
-        light.type = LightType.Spot;
-        light.spotAngle = 100f;
-        light.innerSpotAngle = 55f;
-        light.range = 14f;
-        light.intensity = 5f;
-        light.color = Color.white;
-        light.shadows = LightShadows.Soft;
+        Debug.Log("[Phase1SceneSetup] 특수부대 조명 적용:\n" + log);
+        EditorUtility.DisplayDialog("특수부대 조명", "적용되었습니다. Console 로그를 확인하고 Ctrl+S로 씬을 저장해 주세요.", "확인");
+    }
 
-        log.AppendLine("- PlayerVisionLight(SpotLight) 생성 — 실시간 그림자로 벽 뒤 차폐 (밝기/각도는 시각 확인 후 튜닝 필요)");
+    // 항상 값을 덮어쓴다 (skip-if-exists 아님) — 수치 바꾸고 메뉴 재실행하면 그대로 반영되는 idempotent 튜닝 방식
+    private static void ApplyTacticalLighting(StringBuilder log, PlayerController player)
+    {
+        // 1) 태양광: 사실상 소등 — 손전등 밖은 실루엣도 간신히 보이는 수준
+        foreach (var l in Object.FindObjectsByType<Light>(FindObjectsSortMode.None))
+        {
+            if (l.type != LightType.Directional) continue;
+            l.intensity = 0.04f;
+            l.color = new Color(0.75f, 0.8f, 1f); // 희미한 냉색 잔광 (달빛/비상등 느낌)
+            log.AppendLine("- Directional Light 0.04 (사실상 암전)");
+            break;
+        }
+
+        // 2) 환경광: 스카이박스 기여 차단 — Flat 모드 + 거의 검정 (이걸 안 끄면 태양광을 꺼도 스카이박스가 씬을 밝힌다)
+        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+        RenderSettings.ambientLight = new Color(0.015f, 0.02f, 0.03f);
+        log.AppendLine("- Ambient Flat (0.015, 0.02, 0.03) — 스카이박스 환경광 차단");
+
+        // 3) 메인 카메라 배경: 스카이박스 대신 검정 — 맵 바깥이 밝게 뚫려 보이는 것 방지
+        var mainCam = Camera.main;
+        if (mainCam != null)
+        {
+            mainCam.clearFlags = CameraClearFlags.SolidColor;
+            mainCam.backgroundColor = new Color(0.008f, 0.01f, 0.016f);
+            log.AppendLine("- 메인 카메라 배경 SolidColor(거의 검정)");
+        }
+
+        // 4) 시야 SpotLight (손전등): 기존 100°/14m에서 대폭 축소 — 어두워진 만큼 밝기는 올림
+        var visionT = player.transform.Find("PlayerVisionLight");
+        if (visionT == null)
+        {
+            var visionGO = new GameObject("PlayerVisionLight", typeof(Light));
+            visionGO.transform.SetParent(player.transform, false);
+            visionT = visionGO.transform;
+            log.AppendLine("- PlayerVisionLight(SpotLight) 생성");
+        }
+        visionT.localPosition = new Vector3(0f, 1.2f, 0f);
+        visionT.localRotation = Quaternion.Euler(25f, 0f, 0f);
+
+        var vision = visionT.GetComponent<Light>();
+        vision.type = LightType.Spot;
+        vision.spotAngle = 70f;
+        vision.innerSpotAngle = 38f;
+        vision.range = 11f;
+        vision.intensity = 7f;
+        vision.color = new Color(0.88f, 0.92f, 1f); // 냉백색 — 전술 라이트 톤
+        vision.shadows = LightShadows.Soft;
+        log.AppendLine("- PlayerVisionLight 70°/11m/강도7 (기존 100°/14m/5 → 제한 시야 강화)");
+
+        // 5) 근접 PointLight: 손전등 원뿔 밖이라도 발밑 반경 ~3.5m는 희미하게 —
+        //    본인 캡슐/바로 옆 벽조차 안 보이면 조작 자체가 불가능해지는 것 방지 (시야 정보는 거의 없음)
+        var proxT = player.transform.Find("PlayerProximityLight");
+        if (proxT == null)
+        {
+            var proxGO = new GameObject("PlayerProximityLight", typeof(Light));
+            proxGO.transform.SetParent(player.transform, false);
+            proxT = proxGO.transform;
+            log.AppendLine("- PlayerProximityLight(PointLight) 생성");
+        }
+        proxT.localPosition = new Vector3(0f, 1.5f, 0f);
+
+        var prox = proxT.GetComponent<Light>();
+        prox.type = LightType.Point;
+        prox.range = 3.5f;
+        prox.intensity = 1.2f;
+        prox.color = new Color(0.7f, 0.75f, 0.85f);
+        prox.shadows = LightShadows.None;
+        log.AppendLine("- PlayerProximityLight 반경3.5m/강도1.2 — 발밑 최소 가시성");
     }
 
     // ── 승리/패배 ────────────────────────────────────
