@@ -9,9 +9,9 @@ Shader "AmsalGame/VisionMask"
 {
     Properties
     {
-        _ClearRadius("플레이어 주변 선명 반경(m)", Float) = 5.5
+        _ClearRadius("플레이어 주변 선명 반경(m)", Float) = 4.5
         _ClearFeather("원형 시야 가장자리 페더(m)", Float) = 1.5
-        _SectorRange("전방 부채꼴 시야 길이(m) — 원형 반경의 2.5배", Float) = 13.75
+        _SectorRange("전방 부채꼴 시야 길이(m)", Float) = 13.75
         _SectorRangeFeather("부채꼴 끝 페더(m)", Float) = 2
         _SectorHalfAngleDeg("부채꼴 반각(도)", Float) = 33
         _SectorAngleFeatherDeg("부채꼴 각도 페더(도)", Float) = 6
@@ -95,15 +95,20 @@ Shader "AmsalGame/VisionMask"
                 float angleVis = smoothstep(cosOuter, cosInner, cosAngle);
                 float rangeVis = 1.0 - smoothstep(_SectorRange - _SectorRangeFeather, _SectorRange, playerDist);
 
-                // 픽셀 각도에 해당하는 레이 거리 조회 (이웃 레이와 보간) — 장애물이 있으면
-                // 그 거리에서 시야가 끊기고, 없으면 레이 거리 = _SectorRange라 끝까지 보인다
-                float sinAngle = fwd.x * dirToPixel.y - fwd.y * dirToPixel.x;
+                // 픽셀 각도에 해당하는 레이 거리 조회 — 장애물이 있으면 그 거리에서 시야가 끊기고,
+                // 없으면 레이 거리 = _SectorRange라 끝까지 보인다.
+                // 부호 주의: Unity의 AngleAxis(+각도, up)는 위에서 볼 때 시계방향이라
+                // xz 평면 외적은 (fwd.y*dir.x - fwd.x*dir.y)여야 C# 레이 인덱스와 방향이 일치한다
+                // (반대로 쓰면 좌우 차폐가 거울상으로 뒤집혀 벽 너머가 보이는 버그).
+                float sinAngle = fwd.y * dirToPixel.x - fwd.x * dirToPixel.y;
                 float ang = atan2(sinAngle, cosAngle);
                 float halfSpan = max(_VisionRayHalfSpanRad, 1e-3);
                 float t = saturate((ang + halfSpan) / (2.0 * halfSpan)) * (_VisionRayCount - 1.0);
                 int i0 = (int)t;
                 int i1 = min(i0 + 1, (int)_VisionRayCount - 1);
-                float rayDist = lerp(_VisionRayDist[i0], _VisionRayDist[i1], frac(t));
+                // 이웃 레이 중 짧은 쪽 채택(보간 금지) — 문틈/모서리에서 짧은 레이와 긴 레이를
+                // 섞으면 벽을 뚫는 쐐기가 생긴다. min의 계단은 차폐 페더가 가려줌
+                float rayDist = min(_VisionRayDist[i0], _VisionRayDist[i1]);
                 float occlVis = 1.0 - smoothstep(rayDist - _OcclusionFeather, rayDist, playerDist);
 
                 float sectorVis = angleVis * rangeVis * occlVis;

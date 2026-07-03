@@ -553,9 +553,9 @@ public static class Phase1SceneSetup
         }
 
         // 머티리얼 수치 덮어쓰기 — 부채꼴 범위/각도는 VisionMaskOverlay의 레이캐스트도 같은 값을 읽는 단일 출처
-        mat.SetFloat("_ClearRadius", 5.5f);           // 플레이어 주변 원형 정상 시야 반경(m) — 고정, 장애물 무시
+        mat.SetFloat("_ClearRadius", 4.5f);           // 플레이어 주변 원형 정상 시야 반경(m) — 고정, 장애물 무시 (플레이테스트 "살짝 넓다" → 5.5에서 축소)
         mat.SetFloat("_ClearFeather", 1.5f);
-        mat.SetFloat("_SectorRange", 13.75f);         // 전방 부채꼴 길이 = 원형 반경의 2.5배 (유저 지정 비율 — 반경 바꾸면 같이 조정)
+        mat.SetFloat("_SectorRange", 13.75f);         // 전방 부채꼴 길이 — 유저가 체감으로 확정한 값 (원형 축소와 무관하게 유지)
         mat.SetFloat("_SectorRangeFeather", 2f);
         mat.SetFloat("_SectorHalfAngleDeg", 33f);     // 손전등 반각 35°보다 약간 안쪽 — 빛이 부채꼴을 다 덮게
         mat.SetFloat("_SectorAngleFeatherDeg", 6f);
@@ -726,7 +726,8 @@ public static class Phase1SceneSetup
         countdownText.raycastTarget = false;
         textGO.SetActive(false);
 
-        // 화면 전체 경고 오버레이 (노출 상태일 때만 활성화)
+        // 노출 경고 비네트 (노출 상태일 때만 활성화) — 중앙 투명 스프라이트는 ExposureGaugeUI가
+        // 런타임에 절차 생성해 주입하므로, 여기의 알파는 가장자리 최대 농도를 결정한다
         var overlayGO = new GameObject("WarningOverlay", typeof(RectTransform), typeof(Image));
         overlayGO.transform.SetParent(canvasGO.transform, false);
         var overlayRect = (RectTransform)overlayGO.transform;
@@ -735,7 +736,7 @@ public static class Phase1SceneSetup
         overlayRect.offsetMin = Vector2.zero;
         overlayRect.offsetMax = Vector2.zero;
         var overlayImage = overlayGO.GetComponent<Image>();
-        overlayImage.color = new Color(1f, 0f, 0f, 0.25f);
+        overlayImage.color = new Color(1f, 0.05f, 0.05f, 0.55f);
         overlayImage.raycastTarget = false;
         overlayImage.enabled = false;
 

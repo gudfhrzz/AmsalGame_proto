@@ -15,6 +15,7 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float rotationSpeed = 720f;
 
     private CharacterController _controller;
+    private Camera _mainCam;
     private InputSystem_Actions _input;
     private Vector2 _moveInput;
     private bool _isWalking;
@@ -67,8 +68,10 @@ public class PlayerController : MonoBehaviour
     private void Update()
     {
         HandleMovement();
+        HandleAimRotation();
     }
 
+    // 이동은 WASD(월드 8방향) — 회전과 완전히 분리. 몸이 어디를 보든 이동 방향은 그대로다
     private void HandleMovement()
     {
         Vector3 direction = new Vector3(_moveInput.x, 0f, _moveInput.y);
@@ -76,12 +79,29 @@ public class PlayerController : MonoBehaviour
 
         Vector3 move = IsMoving ? direction.normalized * CurrentSpeed : Vector3.zero;
         _controller.Move(move * Time.deltaTime);
+    }
 
-        if (IsMoving)
+    // 시야(몸 방향)는 마우스 커서를 따라간다 — 이동이 8방향으로 제한돼도 시야는 자유롭게.
+    // 손전등(자식 Light)과 부채꼴 시야 마스크가 transform.forward를 쓰므로 이것 하나로 연동된다
+    private void HandleAimRotation()
+    {
+        if (Mouse.current == null) return;
+        if (_mainCam == null)
         {
-            Quaternion targetRot = Quaternion.LookRotation(direction);
-            transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRot, rotationSpeed * Time.deltaTime);
+            _mainCam = Camera.main;
+            if (_mainCam == null) return;
         }
+
+        Ray ray = _mainCam.ScreenPointToRay(Mouse.current.position.ReadValue());
+        var aimPlane = new Plane(Vector3.up, new Vector3(0f, transform.position.y, 0f));
+        if (!aimPlane.Raycast(ray, out float enter)) return;
+
+        Vector3 look = ray.GetPoint(enter) - transform.position;
+        look.y = 0f;
+        if (look.sqrMagnitude < 0.04f) return; // 커서가 플레이어 바로 위 — 방향 노이즈 방지
+
+        Quaternion targetRot = Quaternion.LookRotation(look);
+        transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRot, rotationSpeed * Time.deltaTime);
     }
 
 #if UNITY_EDITOR
