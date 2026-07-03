@@ -33,7 +33,7 @@
 | CQC 근접전투 | `CombatController.cs`, `PlayerCombatInput.cs` | LMB 공격/암살, RMB 막기/패링, F 그랩 |
 | 존버 방지 | `ExposureSystem.cs` | 정지 타이머, 경고/노출 이벤트, 방어형 보너스 |
 | HUD (일부) | `AssassinationIndicatorUI.cs`, `ExposureGaugeUI.cs`, `GameResultUI.cs` | 암살 인디케이터, 노출 게이지/경고 오버레이, 승패 배너 |
-| FOV (플레이어) | Editor 자동화로 배선 (스크립트 없음) | Player 자식 SpotLight(손전등) + 실시간 그림자, 특수부대풍 암전 (태양광/환경광 소등) |
+| FOV (플레이어) | Editor 자동화로 배선 (스크립트 없음) | Player 자식 SpotLight(손전등, 연출 전용·그림자 OFF), 특수부대풍 암전 (태양광/환경광 소등) + 시야 마스크(원형+부채꼴 레이캐스트 차폐) |
 | 원거리 무기 | `RangedWeaponController.cs`, `ThrownKnife.cs`, `WeaponPickup.cs` | 칼 던지기(Q/R) + 권총 파밍(MMB 발사) |
 | 기본 맵 (A/B 사이트) | Editor 자동화(`SetupSites`) | 마커 + 권총 파밍 지점, ProBuilder 블록아웃 재사용 |
 | 군집 페널티 | `TeamMember.cs`, `ClusterPenaltySystem.cs` | 제네릭 구현 — 팀원이 Player 1명뿐이라 실전 검증은 멀티플레이 phase에서 |
@@ -51,6 +51,16 @@
 - 미니맵 핑 스로틀 (플레이테스트 피드백 "핑이 너무 촘촘함" 대응): `MinimapController`가 소리 주체별로 최소 1.2초 간격으로만 핑을 그림 — 발소리는 0.3초마다 emit되지만 표시만 걸러냄 (AI 청각 게임플레이는 그대로). 총성 등 전역 경보(반경 50m+)는 스로틀 무시하고 항상 표시.
 - 특수부대풍 암전 조명 (플레이테스트 피드백 "제한된 시야, 밀실 느낌" 대응): `Tools → AmsalGame → 특수부대 조명 적용 (제한 시야 강화)` — 태양광 0.04(사실상 소등) + 환경광 Flat 저조도(스카이박스 기여 차단) + 메인 카메라 배경 SolidColor 검정 + 시야 SpotLight 100°/14m/강도5 → 70°/11m/강도7(냉백색) + 근접 PointLight(반경 3.5m, 강도 1.2) 추가로 발밑 최소 가시성 확보. `ApplyTacticalLighting()`이 값을 항상 덮어쓰는 방식이라 수치 튜닝 후 메뉴 재실행으로 반영 가능. Phase 1 자동 구성(`SetupVisionLight`)도 같은 함수를 쓰므로 새 씬에도 동일 적용.
 - 시야 마스크 (유저 요청 "시야 밖은 아예 안 보이게"): `VisionMask.shader` + `VisionMaskOverlay.cs` — 메인 카메라 근평면 앞 프러스텀 크기 쿼드가 화면 전체를 후처리. 보이는 곳 = ① 플레이어 주변 원형 반경 4.5m(깊이 텍스처로 픽셀 월드 좌표 복원 → xz 실거리 판정) ② 전방(마우스 방향) 부채꼴 ±33°/13.75m(원형과 독립된 단독 시야) — 차폐는 둘 다 **레이캐스트 기반**: VisionMaskOverlay가 매 프레임 부채꼴 96개 + 원형 360° 128개 Physics.Raycast를 쏴 각도별 도달 거리를 셰이더 전역 배열(`_VisionRayDist[128]`, `_VisionCircleRayDist[128]`)로 넘기고, 픽셀이 자기 각도의 레이 거리보다 멀면 은폐. 장애물 없으면 각자 원래 범위 끝까지 보임. 원형 레이 각도 기준은 월드 +z 시계방향(플레이어 방향 무관), 부채꼴은 forward 상대. 그 외 = 완전 암전. 조명(luminance)은 시야 판정에서 완전히 분리 — 손전등/환경광은 순수 연출 (luminance 판정·블러 실루엣 경로는 git 히스토리에만 존재). 플레이어 위치/전방은 `_VisionPlayerPosWS`/`_VisionPlayerForwardWS` 전역. 부채꼴 범위/각도의 단일 출처는 머티리얼 값(레이캐스트도 `mat.GetFloat`로 같은 값을 읽음). 장애물 레이어는 `obstacleMask`(기본: Player/Enemy/Minimap/Ignore Raycast 제외 전부 — 적은 시야를 안 막음). **특수부대 조명 메뉴가 머티리얼 값도 덮어쓰므로** 영구 튜닝은 `SetupVisionMask()`의 수치를 수정할 것. 효과 끄기 = 메인 카메라의 VisionMaskOverlay 비활성화. 제약/함정: ① URP Opaque+Depth Texture 필수(현재 둘 다 켜짐, 메뉴가 안전장치로 재확인) ② 메인 카메라의 반투명 오브젝트는 오파크 텍스처에 없어 마스크에 덮임(현재 무영향 — 파티클 추가 시 주의) ③ **오파크 다운샘플링 금지** — 마스크가 화면 전체를 오파크 텍스처로 다시 그리므로 URP의 Opaque Downsampling(기본 2x)이 켜져 있으면 화면 전체가 반해상도로 지글거림/깜빡임(실제로 겪음, 메뉴가 None으로 강제) ④ **각도 부호 함정** — Unity `AngleAxis(+각, up)`는 시계방향이라 셰이더 xz 외적은 `fwd.y*dir.x - fwd.x*dir.y`여야 함. 반대로 쓰면 좌우 차폐가 거울상이 되어 벽 너머가 새는 버그(실제로 겪음). 인접 레이 보간도 lerp 대신 min(문틈에서 벽 뚫는 쐐기 방지).
+- 마우스 시선 (유저 요청 "이동은 8방향, 시야는 자유"): `PlayerController.HandleAimRotation`이 마우스 커서(지면 평면 레이캐스트)로 몸 회전을 매 프레임 갱신, `HandleMovement`는 더 이상 이동 방향으로 회전하지 않음 — WASD 이동과 시야 방향 완전 분리. 손전등/시야 마스크가 `transform.forward` 기반이라 자동 연동됨. 암살(적 forward 기준)·원거리 무기(자체 마우스 조준)는 영향 없음 확인.
+- 노출 경고 비네트화: 화면 전체 빨간 오버레이 → 가장자리만 빨개지는 방사형 비네트로 교체 (`ExposureGaugeUI`가 런타임에 중앙 투명 텍스처를 절차 생성해 주입, 시작 반경 `vignetteInnerRadius` 튜닝 가능).
+- 최적화 패스 (플레이테스트 "화면 깜빡임" 대응, 시야 마스크가 화면 전체를 오파크 텍스처로 재구성하는 구조라 관련 렌더 설정이 전부 전체 화면에 영향을 준다는 점이 이번에 드러남):
+  - **URP SSAO 렌더러 피처 비활성화** (`PC_Renderer.asset`/`Mobile_Renderer.asset`) — 블루노이즈 기반 AO가 암전 씬에서 매 프레임 지글거려 깜빡임의 또 다른 원인이었음(다운샘플링 해제와 별개 원인). `SetupVisionMask()`가 자동 처리.
+  - 손전등/태양광 **그림자 OFF** — 차폐는 레이캐스트가 전담하므로 그림자는 시각적으로 중복이었고, 마우스 시선으로 라이트가 매 프레임 회전하면서 섀도맵이 흔들리던 것도 원인 중 하나로 추정(완전 해소 여부는 플레이 확인 필요).
+  - `AssassinationSystem.FindTarget`: `Physics.OverlapSphere` → `OverlapSphereNonAlloc`(고정 버퍼 8) — 매 프레임 GC 할당 제거.
+  - `MinimapPing`: Instantiate/Destroy 반복 대신 `MinimapController`가 오브젝트 풀링(큐)으로 재사용 — 소리 잦은 상황에서 GC 스파이크 방지.
+  - `VisionMaskOverlay`: 부채꼴/원형 레이캐스트 파라미터(범위/반각)를 매 프레임 `mat.GetFloat` 대신 `OnEnable`에서 1회 캐시.
+  - `ExposureGaugeUI`: 게이지 UI `SetActive`를 상태 변화 시에만 호출(매 프레임 중복 호출 제거).
+  - **미검증**: Unity 에디터에서 플레이 확인 전 — 깜빡임이 남아있다면 다음 용의자는 (a) URP RP 에셋의 다른 다운샘플링/픽셀당 라이트 수 설정 (b) 마우스 시선 회전 자체의 프레임레이트 의존 떨림(HandleAimRotation의 RotateTowards가 프레임 스파이크에 민감할 수 있음) (c) VSync/타겟 프레임레이트 미설정.
 
 ### 🔲 미착수 (Phase 1 잔여)
 - 총알 별도 파밍 (현재는 권총 파밍 시 탄약도 함께 획득하는 것으로 단순화함)
@@ -295,10 +305,10 @@ R6(레인보우식스)풍 스타일 적용 현황: 미니맵은 원형 마스크
 
 시야(FOV): ✅ 구현됨 — 특수부대풍 암전 + 시야 마스크 (주변 원형 + 전방 부채꼴, 그 외 완전 암전)
 - 플레이어 주변 원형 시야 반경 4.5m (시야 마스크가 깊이 기반 월드 거리로 판정) — 손전등과 무관하게 정상 가시, 단 벽 차폐 적용(360° 레이 128개 — 벽에 붙으면 벽 뒤는 안 보임). 근접 PointLight(반경 6m, 강도 2)가 이 영역의 조명 담당
-- 전방 부채꼴 시야: **마우스 커서 방향** ±33°(페더 6°), 길이 13.75m. 원형과 독립된 단독 시야 — 차폐는 매 프레임 96개 레이캐스트로 판정: 장애물에 막히면 그 거리까지, 없으면 13.75m 끝까지. 조명과 무관 (손전등 SpotLight 70°/20m/강도12는 순수 연출). 몸 회전이 마우스를 따라가므로(`HandleAimRotation`) WASD 이동과 시야 방향이 분리됨
+- 전방 부채꼴 시야: **마우스 커서 방향** ±33°(페더 6°), 길이 13.75m. 원형과 독립된 단독 시야 — 차폐는 매 프레임 96개 레이캐스트로 판정: 장애물에 막히면 그 거리까지, 없으면 13.75m 끝까지. 조명과 무관 (손전등 SpotLight 70°/20m/강도12는 순수 연출, 그림자 OFF). 몸 회전이 마우스를 따라가므로(`HandleAimRotation`) WASD 이동과 시야 방향이 분리됨
 - 시야 마스크 (`VisionMask.shader` + `VisionMaskOverlay.cs`): 위 두 조건 밖은 **완전 검정** — 실루엣 없음 (플레이테스트 피드백). 스텐실/렌더러 피처 없이 오파크+깊이 텍스처를 샘플하는 쿼드 1장 + 레이 거리 전역 배열
-- 태양광 0.04(사실상 소등) + 환경광 Flat (0.11, 0.12, 0.14) + 메인 카메라 배경 검정
-- 배선: `ApplyTacticalLighting()` — `Tools → AmsalGame → 특수부대 조명 적용 (제한 시야 강화)` 메뉴로 언제든 재적용/튜닝 (조명 + VisionMask.mat 값까지 항상 덮어쓰기)
+- 태양광 0.04(사실상 소등, 그림자 OFF) + 환경광 Flat (0.11, 0.12, 0.14) + 메인 카메라 배경 검정
+- 배선: `ApplyTacticalLighting()` — `Tools → AmsalGame → 특수부대 조명 적용 (제한 시야 강화)` 메뉴로 언제든 재적용/튜닝 (조명 + VisionMask.mat 값까지 항상 덮어쓰기, URP Opaque Downsampling 해제 + SSAO 비활성까지 포함)
 - 조명 수치·마스크 임계는 여전히 시각 확인 전 추정치라 실제로 봤을 때 튜닝 필요할 가능성 높음
 
 ---

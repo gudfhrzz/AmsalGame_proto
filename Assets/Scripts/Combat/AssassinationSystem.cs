@@ -11,6 +11,8 @@ public class AssassinationSystem : MonoBehaviour
 
     private AIController _currentTarget;
     private ClusterPenaltySystem _cluster;
+    // OverlapSphere(할당형)는 매 프레임 GC 쓰레기를 만든다 — NonAlloc용 고정 버퍼 (근접 적 수 << 8)
+    private readonly Collider[] _overlapBuffer = new Collider[8];
 
     public bool CanAssassinate => _currentTarget != null;
     // 인디케이터 UI가 표시 위치를 알 수 있도록 노출
@@ -34,11 +36,11 @@ public class AssassinationSystem : MonoBehaviour
 
     private AIController FindTarget()
     {
-        Collider[] hits = Physics.OverlapSphere(transform.position, assassinRange, enemyLayer);
-        foreach (var hit in hits)
+        int count = Physics.OverlapSphereNonAlloc(transform.position, assassinRange, _overlapBuffer, enemyLayer);
+        for (int i = 0; i < count; i++)
         {
-            var ai = hit.GetComponent<AIController>();
-            if (ai == null) continue;
+            var hit = _overlapBuffer[i];
+            if (!hit.TryGetComponent(out AIController ai)) continue;
             // Chase/Combat = 이미 플레이어를 인식한 상태 → 암살 불가 (CQC로 전환됨)
             if (ai.CurrentState == AIController.AIState.Chase || ai.CurrentState == AIController.AIState.Combat) continue;
 

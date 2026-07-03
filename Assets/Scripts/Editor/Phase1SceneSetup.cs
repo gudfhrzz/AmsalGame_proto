@@ -450,7 +450,8 @@ public static class Phase1SceneSetup
             if (l.type != LightType.Directional) continue;
             l.intensity = 0.04f;
             l.color = new Color(0.75f, 0.8f, 1f); // 희미한 냉색 잔광 (달빛/비상등 느낌)
-            log.AppendLine("- Directional Light 0.04 (사실상 암전)");
+            l.shadows = LightShadows.None; // 강도 0.04에서 그림자는 안 보임 — 캐스케이드 섀도 패스만 낭비
+            log.AppendLine("- Directional Light 0.04, 그림자 OFF (사실상 암전)");
             break;
         }
 
@@ -491,8 +492,11 @@ public static class Phase1SceneSetup
         vision.range = 20f;
         vision.intensity = 12f;
         vision.color = new Color(0.88f, 0.92f, 1f); // 냉백색 — 전술 라이트 톤
-        vision.shadows = LightShadows.Soft;
-        log.AppendLine("- PlayerVisionLight 70°/20m/강도12 — 부채꼴 시야 연출용 (시야 판정과는 무관)");
+        // 그림자 OFF — 벽 차폐는 시야 마스크(레이캐스트)가 전담하므로 그림자는 시각적으로 중복.
+        // 마우스 시선으로 라이트가 매 프레임 회전하면 섀도맵 텍셀이 흔들려 깜빡임의 원인이 되고,
+        // 그림자 패스 제거는 이 씬 최대의 GPU 절감이기도 하다
+        vision.shadows = LightShadows.None;
+        log.AppendLine("- PlayerVisionLight 70°/20m/강도12, 그림자 OFF (차폐는 레이캐스트 전담 — 깜빡임/성능)");
 
         // 5) 근접 PointLight: 손전등 원뿔 밖이라도 발밑 반경 ~3.5m는 희미하게 —
         //    본인 캡슐/바로 옆 벽조차 안 보이면 조작 자체가 불가능해지는 것 방지 (시야 정보는 거의 없음)
@@ -599,6 +603,22 @@ public static class Phase1SceneSetup
                 rpSO.ApplyModifiedProperties();
                 EditorUtility.SetDirty(rpAsset);
                 log.AppendLine("- URP Opaque Downsampling 해제 (2x Bilinear → None) — 화면 깜빡임/반해상도 원인 제거");
+            }
+        }
+
+        // SSAO 렌더러 피처 비활성 — 블루노이즈 기반이라 거의 암전인 이 씬에서는 어두운 영역 전체가
+        // 프레임마다 지글거리는 깜빡임의 원인이 된다 (시각 기여는 어두워서 어차피 안 보임 + GPU 절약)
+        foreach (var rendererPath in new[] { "Assets/Settings/PC_Renderer.asset", "Assets/Settings/Mobile_Renderer.asset" })
+        {
+            var rendererData = AssetDatabase.LoadAssetAtPath<ScriptableRendererData>(rendererPath);
+            if (rendererData == null) continue;
+            foreach (var feature in rendererData.rendererFeatures)
+            {
+                if (feature == null || !feature.isActive || !feature.name.Contains("ScreenSpaceAmbientOcclusion")) continue;
+                feature.SetActive(false);
+                EditorUtility.SetDirty(feature);
+                EditorUtility.SetDirty(rendererData);
+                log.AppendLine($"- SSAO 비활성 ({System.IO.Path.GetFileNameWithoutExtension(rendererPath)}) — 암전 씬 노이즈 깜빡임 제거");
             }
         }
 

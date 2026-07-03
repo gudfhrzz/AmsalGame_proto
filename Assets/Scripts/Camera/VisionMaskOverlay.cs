@@ -34,10 +34,19 @@ public class VisionMaskOverlay : MonoBehaviour
     [Tooltip("카메라에서 쿼드까지 거리 — 근평면보다 약간 멀게")]
     [SerializeField] private float quadDistance = 0.5f;
 
+    private static readonly int SectorRangeId = Shader.PropertyToID("_SectorRange");
+    private static readonly int SectorHalfAngleId = Shader.PropertyToID("_SectorHalfAngleDeg");
+    private static readonly int SectorAngleFeatherId = Shader.PropertyToID("_SectorAngleFeatherDeg");
+    private static readonly int ClearRadiusId = Shader.PropertyToID("_ClearRadius");
+
     private Camera _cam;
     private Transform _quad;
     private readonly float[] _rayDistances = new float[RayCount];
     private readonly float[] _circleRayDistances = new float[CircleRayCount];
+    // 머티리얼 값은 플레이 중 변하지 않으므로(메뉴는 에디트 모드에서만 덮어씀) OnEnable에서 1회 캐시
+    private float _sectorRange;
+    private float _halfSpanDeg;
+    private float _clearRadius;
 
     public void Bind(Material material, Transform playerTransform)
     {
@@ -72,6 +81,14 @@ public class VisionMaskOverlay : MonoBehaviour
             return;
         }
 
+        // 매 프레임 갱신할 필요 없는 값들은 여기서 1회만 — 레이캐스트 파라미터 캐시 + 상수 전역
+        _sectorRange = maskMaterial.GetFloat(SectorRangeId);
+        _halfSpanDeg = maskMaterial.GetFloat(SectorHalfAngleId) + maskMaterial.GetFloat(SectorAngleFeatherId);
+        _clearRadius = maskMaterial.GetFloat(ClearRadiusId);
+        Shader.SetGlobalFloat(RayCountId, RayCount);
+        Shader.SetGlobalFloat(CircleRayCountId, CircleRayCount);
+        Shader.SetGlobalFloat(RayHalfSpanId, _halfSpanDeg * Mathf.Deg2Rad);
+
         var go = GameObject.CreatePrimitive(PrimitiveType.Quad);
         go.name = "VisionMaskQuad";
         Destroy(go.GetComponent<Collider>());
@@ -105,13 +122,9 @@ public class VisionMaskOverlay : MonoBehaviour
     }
 
     // 부채꼴/원형 차폐 판정 — 각도별 레이 도달 거리를 셰이더로 넘긴다.
-    // 범위/각도는 머티리얼 값을 단일 출처로 읽어 셰이더의 기하 판정과 항상 일치시킨다.
+    // 범위/각도는 머티리얼 값을 단일 출처로 캐시해 셰이더의 기하 판정과 항상 일치시킨다.
     private void CastVisionRays()
     {
-        float sectorRange = maskMaterial.GetFloat("_SectorRange");
-        float halfSpanDeg = maskMaterial.GetFloat("_SectorHalfAngleDeg") + maskMaterial.GetFloat("_SectorAngleFeatherDeg");
-        float clearRadius = maskMaterial.GetFloat("_ClearRadius");
-
         Vector3 origin = player.position + Vector3.up * rayHeight;
         Vector3 forward = player.forward;
         forward.y = 0f;
@@ -120,27 +133,24 @@ public class VisionMaskOverlay : MonoBehaviour
         // 부채꼴: 전방(마우스 방향) 기준 ±halfSpan
         for (int i = 0; i < RayCount; i++)
         {
-            float angleDeg = Mathf.Lerp(-halfSpanDeg, halfSpanDeg, i / (RayCount - 1f));
+            float angleDeg = Mathf.Lerp(-_halfSpanDeg, _halfSpanDeg, i / (RayCount - 1f));
             Vector3 dir = Quaternion.AngleAxis(angleDeg, Vector3.up) * forward;
-            _rayDistances[i] = Physics.Raycast(origin, dir, out RaycastHit hit, sectorRange, obstacleMask, QueryTriggerInteraction.Ignore)
+            _rayDistances[i] = Physics.Raycast(origin, dir, out RaycastHit hit, _sectorRange, obstacleMask, QueryTriggerInteraction.Ignore)
                 ? hit.distance
-                : sectorRange; // 장애물 없음 → 원래 시야 범위 끝까지
+                : _sectorRange; // 장애물 없음 → 원래 시야 범위 끝까지
         }
 
         // 원형: 월드 +z 기준 시계방향 360° — 벽에 붙으면 벽 뒤가 안 보이도록 원형도 차폐 (플레이테스트 피드백)
         for (int i = 0; i < CircleRayCount; i++)
         {
             Vector3 dir = Quaternion.AngleAxis(i * 360f / CircleRayCount, Vector3.up) * Vector3.forward;
-            _circleRayDistances[i] = Physics.Raycast(origin, dir, out RaycastHit hit, clearRadius, obstacleMask, QueryTriggerInteraction.Ignore)
+            _circleRayDistances[i] = Physics.Raycast(origin, dir, out RaycastHit hit, _clearRadius, obstacleMask, QueryTriggerInteraction.Ignore)
                 ? hit.distance
-                : clearRadius;
+                : _clearRadius;
         }
 
         Shader.SetGlobalFloatArray(RayDistId, _rayDistances);
-        Shader.SetGlobalFloat(RayCountId, RayCount);
-        Shader.SetGlobalFloat(RayHalfSpanId, halfSpanDeg * Mathf.Deg2Rad);
         Shader.SetGlobalFloatArray(CircleRayDistId, _circleRayDistances);
-        Shader.SetGlobalFloat(CircleRayCountId, CircleRayCount);
     }
 
     private void FitToFrustum()

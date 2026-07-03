@@ -11,6 +11,7 @@ public class ExposureGaugeUI : MonoBehaviour
 
     private Texture2D _vignetteTexture;
     private Sprite _vignetteSprite;
+    private bool? _lastGaugeVisible; // SetActive를 상태 변화 시에만 호출 (매 프레임 중복 호출 방지)
 
     [SerializeField] private ExposureSystem source;
     [SerializeField] private Image gaugeFill;
@@ -80,17 +81,16 @@ public class ExposureGaugeUI : MonoBehaviour
 
         bool showGauge = source.IsWarning;
 
-        if (gaugeFill != null)
+        if (_lastGaugeVisible != showGauge)
         {
-            gaugeFill.gameObject.SetActive(showGauge);
-            gaugeFill.fillAmount = source.WarningProgress01;
+            _lastGaugeVisible = showGauge;
+            if (gaugeFill != null) gaugeFill.gameObject.SetActive(showGauge);
+            if (countdownText != null) countdownText.gameObject.SetActive(showGauge);
+            if (gaugeBackground != null) gaugeBackground.gameObject.SetActive(showGauge);
         }
 
-        if (countdownText != null)
-            countdownText.gameObject.SetActive(showGauge);
-
-        if (gaugeBackground != null)
-            gaugeBackground.gameObject.SetActive(showGauge);
+        if (showGauge && gaugeFill != null)
+            gaugeFill.fillAmount = source.WarningProgress01;
     }
 
     private void HandleExposureStart()

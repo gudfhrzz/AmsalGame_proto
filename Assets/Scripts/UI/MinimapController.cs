@@ -66,6 +66,10 @@ public class MinimapController : MonoBehaviour
     private int _minimapLayer;
     private bool _gameEnded;
     private readonly Dictionary<int, float> _lastPingTimeBySource = new();
+    // 핑 풀 — 생성/파괴 반복(GC + Shader.Find) 대신 재사용. 루트는 씬 정리용
+    private readonly Queue<MinimapPing> _pingPool = new();
+    private Transform _pingRoot;
+    private Shader _spriteShader;
 
     public void Bind(Camera cam, RawImage image, Image circleMask, Image circleFrame, Transform playerTransform,
         ExposureSystem exposureSystem, GameStateManager state, GameObject ring)
@@ -85,6 +89,8 @@ public class MinimapController : MonoBehaviour
         _minimapLayer = LayerMask.NameToLayer(MinimapLayerName);
         _discTexture = CreateDiscTexture(64);
         _ringTexture = CreateRingTexture(64);
+        _spriteShader = Shader.Find("Sprites/Default");
+        _pingRoot = new GameObject("MinimapPings").transform;
 
         if (minimapCamera != null)
         {
@@ -114,7 +120,7 @@ public class MinimapController : MonoBehaviour
             var ringRenderer = exposureRing.GetComponent<MeshRenderer>();
             if (ringRenderer != null)
             {
-                _ringMaterial = new Material(Shader.Find("Sprites/Default"))
+                _ringMaterial = new Material(_spriteShader)
                 {
                     mainTexture = _ringTexture,
                     color = exposureRingColor
@@ -147,6 +153,9 @@ public class MinimapController : MonoBehaviour
         }
         if (gameState != null)
             gameState.OnGameEnded -= HandleGameEnded;
+
+        // 풀/활성 핑 일괄 정리 (핑의 OnDestroy가 각자 머티리얼을 정리)
+        if (_pingRoot != null) Destroy(_pingRoot.gameObject);
 
         // 카메라가 해제된 RT에 그리지 않도록 targetTexture부터 끊는다
         if (minimapCamera != null) minimapCamera.targetTexture = null;
@@ -202,20 +211,29 @@ public class MinimapController : MonoBehaviour
 
         float radius = Mathf.Clamp(e.Radius, pingRadiusMin, pingRadiusMax);
 
-        var pingGO = GameObject.CreatePrimitive(PrimitiveType.Quad);
-        pingGO.name = "MinimapPing";
-        Destroy(pingGO.GetComponent<Collider>());
-
-        var ping = pingGO.AddComponent<MinimapPing>();
-        ping.Init(
+        var ping = _pingPool.Count > 0 ? _pingPool.Dequeue() : CreatePing();
+        ping.Show(
             new Vector3(e.Position.x, PingHeight, e.Position.z),
             radius,
             isAlarm ? alarmPingColor : pingColor,
-            pingLifetime,
-            _discTexture,
-            _minimapLayer
+            pingLifetime
         );
     }
+
+    private MinimapPing CreatePing()
+    {
+        var pingGO = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        pingGO.name = "MinimapPing";
+        Destroy(pingGO.GetComponent<Collider>());
+        pingGO.transform.SetParent(_pingRoot, false);
+        pingGO.SetActive(false);
+
+        var ping = pingGO.AddComponent<MinimapPing>();
+        ping.Setup(_discTexture, _minimapLayer, _spriteShader, ReturnPingToPool);
+        return ping;
+    }
+
+    private void ReturnPingToPool(MinimapPing ping) => _pingPool.Enqueue(ping);
 
     private void HandleExposureStart()
     {
